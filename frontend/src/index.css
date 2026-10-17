@@ -1,0 +1,43 @@
+@font-face {
+  font-family: "Permanent Marker";
+  src: url("./assets/fonts/PermanentMarker-Regular.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Bebas Neue";
+  src: url("./assets/fonts/BebasNeue-Regular.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: Montserrat;
+  src: url("./assets/fonts/Montserrat-Variable.ttf") format("truetype");
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+}
+:root {
+  font-family: Montserrat, "Segoe UI", Arial, sans-serif;
+  color: #eef6ff;
+  background: #071024;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; }
+button, input, select { font: inherit; }
+button, a, input, select, summary { -webkit-tap-highlight-color: transparent; }
+button { cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+a { color: inherit; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible { outline: 3px solid #74d9ff; outline-offset: 4px; }
+button, input, select { min-height: 44px; }
+img { display: block; max-width: 100%; }
+h1, h2, h3, p { margin-top: 0; }
+button, a, h1, h2, h3, p, strong, small { overflow-wrap: anywhere; }
+::selection { background: #edc46e; color: #181108; }
