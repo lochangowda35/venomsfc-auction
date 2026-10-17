@@ -18,7 +18,17 @@ from models import HostSession
 
 
 auth = Blueprint("auth", __name__, url_prefix="/api/auth")
-limiter = Limiter(key_func=get_remote_address, storage_uri="memory://")
+def client_address():
+    # Behind Cloudflare Tunnel every request arrives from 127.0.0.1, so use the
+    # visitor address Cloudflare supplies. Only enabled for the tunnel setup.
+    if current_app.config.get("TRUST_CLOUDFLARE") and request.remote_addr == "127.0.0.1":
+        forwarded = request.headers.get("CF-Connecting-IP", "").strip()
+        if forwarded:
+            return forwarded
+    return get_remote_address()
+
+
+limiter = Limiter(key_func=client_address, storage_uri="memory://")
 
 
 def token_hash(token):
@@ -133,7 +143,10 @@ def init_auth(app):
     @app.errorhandler(SQLAlchemyError)
     def database_unavailable(error):
         db.session.rollback()
-        app.logger.error("Database operation failed; check database service and migrations.")
+        app.logger.error(
+            "Database operation failed; check database service and migrations.",
+            exc_info=error,
+        )
         response = jsonify(error="Database operation failed. Please retry later.")
         response.status_code = 503
         response.headers["Cache-Control"] = "no-store"

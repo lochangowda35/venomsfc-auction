@@ -114,6 +114,28 @@ class HostAuthTests(unittest.TestCase):
             self.assertIn("Too many login attempts", response.json["error"])
             limiter.reset()
 
+    def test_tunnel_throttles_each_visitor_separately(self):
+        self.app.config["TRUST_CLOUDFLARE"] = True
+        with patch.object(limiter, "enabled", True):
+            limiter.reset()
+            token = self.csrf()
+            for _ in range(5):
+                self.client.post(
+                    "/api/auth/login", json={"password": "wrong"},
+                    headers={"X-CSRF-Token": token, "CF-Connecting-IP": "203.0.113.5"},
+                )
+            blocked = self.client.post(
+                "/api/auth/login", json={"password": "wrong"},
+                headers={"X-CSRF-Token": token, "CF-Connecting-IP": "203.0.113.5"},
+            )
+            self.assertEqual(blocked.status_code, 429)
+            other = self.client.post(
+                "/api/auth/login", json={"password": "test-host-password"},
+                headers={"X-CSRF-Token": token, "CF-Connecting-IP": "198.51.100.7"},
+            )
+            self.assertEqual(other.status_code, 200)
+            limiter.reset()
+
     def test_repeat_login_revokes_previous_cookie(self):
         self.login()
         old_cookie = self.client.get_cookie("venomsfc_session")

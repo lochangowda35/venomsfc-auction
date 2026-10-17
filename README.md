@@ -4,7 +4,8 @@ A local football-auction demo built with Flask/Python, React/TypeScript/Vite,
 and PostgreSQL. It uses the official Venoms FC crest, auction banner and five
 team logos in a midnight-blue liquid-glass theme, with restrained cyan, violet,
 teal and gold accents and original decorative snake artwork.
-No public hosting or DNS changes are included.
+It can be published at https://www.venomsfc.in from the laptop through a free
+Cloudflare Tunnel (see [Going live](#going-live-on-wwwvenomsfcin)).
 
 ## Open the demo
 
@@ -33,8 +34,40 @@ counts, and every signed player with photo, position and price. It updates live.
 Use **← All teams**, Escape, or the browser Back button to return; the chips at the
 top switch between teams. Host and TV team cards stay non-clickable.
 These loopback URLs work only on this computer; viewing on another physical phone
-or TV over Wi-Fi needs a separately reviewed LAN configuration. This demo does
-not expose a public server.
+or TV over Wi-Fi needs a separately reviewed LAN configuration. For the public
+site, see [Going live](#going-live-on-wwwvenomsfcin).
+
+## Going live on www.venomsfc.in
+
+The public site runs on this laptop and reaches the internet through a free
+**Cloudflare Tunnel**. Visitors open www.venomsfc.in, Cloudflare forwards each
+request through the tunnel to the app on the laptop, and the data comes from the
+laptop's PostgreSQL database. No data is copied anywhere else.
+
+One-time setup (already done for venomsfc.in):
+
+1. Domain registered at Namecheap, with nameservers pointed to Cloudflare (free plan).
+2. `cloudflared` installed (`winget install Cloudflare.cloudflared`).
+3. `cloudflared tunnel login`, `cloudflared tunnel create venomsfc`, then
+   `cloudflared tunnel route dns venomsfc www.venomsfc.in` (and `venomsfc.in`).
+4. `%USERPROFILE%\.cloudflared\config.yml` routes both hostnames to
+   `http://127.0.0.1:5000`. The tunnel credentials there are secret and are never
+   committed.
+
+To go live, run from the project folder and keep the window open:
+
+```powershell
+.\start-public.ps1
+```
+
+It builds the frontend, applies migrations, checks the database, starts the
+tunnel and serves the app with Waitress (a production web server). Ctrl+C stops
+both. In public mode the host cookie is HTTPS-only, so sign in as host at
+https://www.venomsfc.in/host (not 127.0.0.1), and login throttling applies to each
+visitor separately (`TRUST_CLOUDFLARE=1`).
+
+The site is only online while the laptop is on, awake and connected. On auction
+day keep it plugged in with sleep turned off.
 
 ### Laptop host desk + HDMI TV
 

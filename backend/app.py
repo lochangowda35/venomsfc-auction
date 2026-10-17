@@ -34,6 +34,7 @@ def create_app(test_config=None):
         UPLOAD_FOLDER=str(Path(__file__).parent / "uploads"),
         MAX_CONTENT_LENGTH=6 * 1024 * 1024,
         OFFICIAL_TEAMS=True,
+        TRUST_CLOUDFLARE=os.environ.get("TRUST_CLOUDFLARE") == "1",
     )
 
     if os.environ.get("PGDATABASE"):
