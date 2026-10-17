@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="700" height="1000" viewBox="0 0 700 1000" fill="none">
+  <defs>
+    <linearGradient id="body" x1="530" y1="100" x2="180" y2="930" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7cd8f1" stop-opacity=".18"/>
+      <stop offset=".42" stop-color="#6b8ddc" stop-opacity=".08"/>
+      <stop offset="1" stop-color="#54b9b5" stop-opacity=".13"/>
+    </linearGradient>
+    <linearGradient id="edge" x1="450" y1="60" x2="160" y2="980" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#b4ebff" stop-opacity=".6"/>
+      <stop offset=".5" stop-color="#789ee6" stop-opacity=".05"/>
+      <stop offset="1" stop-color="#65d6cb" stop-opacity=".3"/>
+    </linearGradient>
+    <pattern id="scales" width="30" height="36" patternUnits="userSpaceOnUse">
+      <path d="M0 0Q15 32 30 0M-15 18Q0 50 15 18M15 18Q30 50 45 18" stroke="#b9e3ff" stroke-opacity=".12"/>
+    </pattern>
+    <mask id="snake">
+      <path d="M436 258C596 400 208 410 262 573C298 681 609 602 543 756C494 869 180 787 155 939" stroke="#fff" stroke-width="82" stroke-linecap="round"/>
+      <path d="M434 284C387 258 355 203 366 157C374 123 407 85 443 70C469 63 489 81 494 108C500 148 472 192 467 220L484 263L434 284Z" fill="#fff"/>
+    </mask>
+  </defs>
+  <g mask="url(#snake)">
+    <path fill="url(#body)" d="M0 0H700V1000H0Z"/>
+    <path fill="url(#scales)" d="M0 0H700V1000H0Z"/>
+  </g>
+  <path d="M436 258C596 400 208 410 262 573C298 681 609 602 543 756C494 869 180 787 155 939" stroke="url(#edge)" stroke-width="84" stroke-linecap="round"/>
+  <path d="M436 258C596 400 208 410 262 573C298 681 609 602 543 756C494 869 180 787 155 939" stroke="#0e284c" stroke-opacity=".65" stroke-width="80" stroke-linecap="round"/>
+  <g mask="url(#snake)"><path fill="url(#scales)" d="M0 0H700V1000H0Z"/></g>
+  <path d="M434 284C387 258 355 203 366 157C374 123 407 85 443 70C469 63 489 81 494 108C500 148 472 192 467 220L484 263" stroke="url(#edge)" stroke-width="2"/>
+  <path d="M393 152L420 137L412 159Z" fill="#b4e8ff" fill-opacity=".65"/>
+  <path d="M448 109L465 99L461 119Z" fill="#b4e8ff" fill-opacity=".65"/>
+  <path d="M382 184Q419 192 457 151M426 90L441 116" stroke="#b4e8ff" stroke-opacity=".28" stroke-width="2"/>
+</svg>
