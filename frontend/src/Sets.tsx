@@ -79,7 +79,7 @@ export function PlayerDialog({ state, playerId, onClose }: { state: AuctionState
         {player.captain ? <p className="muted">Chosen as captain of {team?.name ?? 'a team'} before the auction for {credits(player.price ?? 0)} points. Captains are not auctioned, so there were no bids.</p>
           : player.status === 'sold' ? player.bids.length ? <ol className="bid-history">{player.bids.map((bid, index) => {
             const bidder = teamOf(bid.team_id)
-            const last = index === player.bids.length - 1
+            const last = index === player.bids.length - 1 && !player.manual_assignment
             return <li key={index} className={last ? 'winning' : ''}>
               <span className="bid-step">{index + 1}</span>
               {bidder && <Portrait path={bidder.logo_path} name={bidder.name} className="set-team-logo" />}
@@ -91,6 +91,7 @@ export function PlayerDialog({ state, playerId, onClose }: { state: AuctionState
           : player.status === 'current' ? <p className="muted">Bidding is live right now. The full bid history appears here once the player is sold.</p>
             : player.status === 'unsold' ? <p className="muted">No team bought this player. They wait in the Unsold set for the final round.</p>
               : <p className="muted">Waiting in {setLabels[player.position]}. Bids appear here after the player is sold.</p>}
+        {player.manual_assignment && <p className="muted">The host recorded or corrected this final assignment manually. Any bids above are the original recorded bids, not the corrected final price.</p>}
       </>}
     </div>
   </dialog>

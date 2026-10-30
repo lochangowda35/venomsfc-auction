@@ -64,15 +64,18 @@ class OfficialBrandingTests(unittest.TestCase):
             self.assertTrue(valid_media_path(f"/api/branding/{file}"))
         self.assertFalse(valid_media_path("/api/branding/auction-banner.jpg"))
 
-    def test_host_cannot_add_rename_replace_or_delete_official_teams(self):
+    def test_host_can_edit_but_not_add_or_delete_official_teams(self):
         prepare_official_teams()
         for method, path in (
-            ("POST", "/api/teams"), ("PUT", "/api/teams/1"), ("DELETE", "/api/teams/1")
+            ("POST", "/api/teams"), ("DELETE", "/api/teams/1")
         ):
             result = self.client.open(path, method=method, headers=self.headers,
                 json={"name": "Changed", "logo_path": "/api/branding/cobras.jpg"})
             self.assertEqual(result.status_code, 409)
-            self.assertIn("fixed", result.json["error"])
+            self.assertIn("five existing teams", result.json["error"])
+        result = self.client.put("/api/teams/1", headers=self.headers,
+            json={"name": "Changed", "logo_path": "/api/branding/cobras.jpg"})
+        self.assertEqual(result.status_code, 200)
         self.assertEqual(Team.query.count(), 5)
 
     def test_display_crests_are_square_and_fill_the_frame_without_replacing_originals(self):
@@ -164,6 +167,6 @@ class OfficialBrandingTests(unittest.TestCase):
             "action": "start", "expected_version": state["version"], "request_id": "official-start",
         })
         self.assertEqual(result.status_code, 200, result.json)
-        self.assertEqual(result.json["status"], "completed")
+        self.assertEqual(result.json["status"], "running")
         self.assertFalse(prepare_official_teams())
-        self.assertEqual(db.session.get(Auction, 1).state["status"], "completed")
+        self.assertEqual(db.session.get(Auction, 1).state["status"], "running")

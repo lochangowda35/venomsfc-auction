@@ -17,9 +17,9 @@ export function Stage({ state }: { state: AuctionState }) {
         {player && <Portrait path={player.photo_path} name={player.name} className="hero-portrait" />}
         <div className="stage-copy">
           <span className="eyebrow">{state.status === 'paused' ? 'Timeout / bidding paused' : state.status === 'completed' ? 'Final whistle' : player ? 'On the block' : 'Venoms FC / Auction day'}</span>
-          <h1 id="stage-title">{player ? player.name : state.status === 'setup' ? 'The next chapter starts here.' : state.status === 'completed' ? 'Squads complete.' : 'Who’s up next?'}</h1>
+          <h1 id="stage-title">{player ? player.name : state.status === 'setup' ? 'The next chapter starts here.' : state.status === 'completed' ? 'Auction complete.' : 'Who’s up next?'}</h1>
           {player ? <p><span className="position">{player.position}</span><span className="muted"> Player #{player.id}</span></p>
-            : <p className="muted">{state.status === 'setup' ? 'The host is preparing the clubs and player pool. This screen updates automatically.' : state.status === 'completed' ? 'Every squad is full. Explore the final rosters and auction results below.' : 'Waiting for the host to bring the next player into the spotlight.'}</p>}
+            : <p className="muted">{state.status === 'setup' ? 'The host is preparing the clubs and player pool. This screen updates automatically.' : state.status === 'completed' ? 'The host has closed bidding. Explore the saved rosters and results below.' : 'Waiting for the host to bring the next player into the spotlight.'}</p>}
         </div>
       </div>
       {player && <div className="bid-display">
@@ -38,17 +38,17 @@ export function Stage({ state }: { state: AuctionState }) {
 export function TeamBoard({ state, onOpen, compact = false }: { state: AuctionState; onOpen?: (id: number) => void; compact?: boolean }) {
   return <section className={`rosters-section ${compact ? 'squad-compact' : ''}`} aria-labelledby="rosters-title">
     <div className="section-heading"><div><span className="eyebrow">The clubs</span><h2 id="rosters-title">Squad watch</h2></div>
-      <span className="muted">{state.squad_size} players / team</span></div>
+      <span className="muted">No squad limit</span></div>
     {!state.teams.length && <div className="panel empty">Clubs will appear here once the host adds them.</div>}
-    <div className="team-grid">{state.teams.map((team) => <article key={team.id} className={`team-card ${state.current?.team_id === team.id ? 'is-leading' : ''} ${onOpen ? 'is-clickable' : ''}`}>
+    <div className="team-grid">{state.teams.map((team) => <article key={team.id} onClick={() => onOpen?.(team.id)} className={`team-card ${state.current?.team_id === team.id ? 'is-leading' : ''} ${onOpen ? 'is-clickable' : ''}`}>
       <div className="team-card-heading"><Portrait path={team.logo_path} name={team.name} className="team-logo" />
         <div><h3>{onOpen
-          ? <button type="button" className="team-open" data-team-id={team.id} onClick={() => onOpen(team.id)} aria-label={`View ${team.name} squad and details`}>{team.name}</button>
-          : team.name}</h3><span className="muted">{team.remaining_slots === 0 ? '✓ Squad full' : `${team.roster.length} / ${state.squad_size} signed`}</span></div>
+          ? <button type="button" className="team-open" data-team-id={team.id} aria-label={`View ${team.name} squad and details`}>{team.name}</button>
+          : team.name}</h3><span className="muted">{team.roster.length} signed</span></div>
         {state.current?.team_id === team.id && <span className="tag">Leading</span>}</div>
       <div className="team-money"><div><span>Remaining</span><strong>{credits(team.budget)} <small>points</small></strong></div>
-        <div><span>Max bid</span><strong>{credits(team.max_bid)} <small>points</small></strong><small className="reserve-hint">10 reserved per open slot</small></div></div>
-      <div className="squad-meter" aria-label={`${team.roster.length} of ${state.squad_size} places filled`}><span style={{ width: `${Math.min(100, team.roster.length / state.squad_size * 100)}%` }} /></div>
+        <div><span>Max bid</span><strong>{credits(team.max_bid)} <small>points</small></strong></div></div>
+      <div className="squad-meter" aria-label={`${team.spent} of 1000 points spent`}><span style={{ width: `${Math.min(100, team.spent / 10)}%` }} /></div>
       {compact ? <ul className="roster-chips" aria-label={`${team.name} squad`}>
         {!team.roster.length && <li className="muted empty-chip">No signings yet</li>}
         {team.roster.map((player) => <li key={player.id}>{player.captain && <CaptainBadge />}<span>{player.name}</span><b>{credits(player.price)}</b></li>)}
@@ -60,7 +60,7 @@ export function TeamBoard({ state, onOpen, compact = false }: { state: AuctionSt
           <div><strong>{player.name}{player.captain && <CaptainBadge />}</strong><small className="muted">{player.position}{player.captain ? ' · Captain' : ''}</small></div><b>{credits(player.price)} <small>points</small></b>
         </div>)}
       </div>
-      <div className="team-footer">Spent {credits(team.spent)} / {credits(team.budget + team.spent)} points <span>{onOpen ? <span className="team-open-hint" aria-hidden="true">View squad →</span> : `${team.remaining_slots} open slots`}</span></div>
+      <div className="team-footer">Spent {credits(team.spent)} / {credits(team.budget + team.spent)} points <span>{onOpen ? <span className="team-open-hint" aria-hidden="true">View squad →</span> : 'Unlimited squad'}</span></div>
       </>}
     </article>)}</div>
   </section>
@@ -84,14 +84,13 @@ export function TeamDetail({ state, teamId, onBack, onOpen, onPlayer }: {
   </section>
   const bidding = state.current?.team_id === team.id ? state.players.find((p) => p.id === state.current?.player_id) : undefined
   const counts = positions.map((position) => [position, team.roster.filter((p) => p.position === position).length] as const)
-  const openSlots = Array.from({ length: Math.max(0, team.remaining_slots) })
   const total = team.budget + team.spent
   const captain = team.roster.find((p) => p.captain)
   return <section className="team-detail" aria-labelledby="team-detail-title">
     <nav className="team-detail-nav" aria-label="Teams">
       <button type="button" className="secondary team-back" onClick={onBack}>← All teams</button>
       <div className="team-switcher">{state.teams.map((t) => <button type="button" key={t.id} className={t.id === team.id ? 'active' : ''}
-        aria-current={t.id === team.id ? 'page' : undefined} onClick={() => onOpen(t.id)} title={t.name}>
+        aria-current={t.id === team.id ? 'page' : undefined} onClick={() => onOpen(t.id)} title={t.name} aria-label={t.name}>
         <Portrait path={t.logo_path} name={t.name} className="switch-logo" /><span>{t.name}</span></button>)}</div>
     </nav>
     <div className="panel team-detail-hero">
@@ -99,16 +98,16 @@ export function TeamDetail({ state, teamId, onBack, onOpen, onPlayer }: {
       <div className="team-detail-title">
         <span className="eyebrow">Internal team · Squad profile</span>
         <h1 id="team-detail-title" ref={heading} tabIndex={-1}>{team.name}</h1>
-        <p className="muted">{team.remaining_slots === 0 ? '✓ Squad complete' : `${team.roster.length} of ${state.squad_size} players signed · ${team.remaining_slots} open ${team.remaining_slots === 1 ? 'slot' : 'slots'}`}</p>
+        <p className="muted">{team.roster.length} players signed · No squad limit</p>
         {bidding && <p className="tag team-leading-tag">Leading bid · {credits(state.current?.bid ?? 0)} points for {bidding.name}</p>}
       </div>
       <dl className="team-detail-stats">
         <div><dt>Remaining</dt><dd>{credits(team.budget)} <small>points</small></dd></div>
         <div><dt>Spent</dt><dd>{credits(team.spent)} <small>/ {credits(total)}</small></dd></div>
-        <div><dt>Max bid</dt><dd>{credits(team.max_bid)} <small>points</small></dd><small className="reserve-hint">10 reserved per open slot</small></div>
-        <div><dt>Squad</dt><dd>{team.roster.length} <small>/ {state.squad_size}</small></dd></div>
+        <div><dt>Max bid</dt><dd>{credits(team.max_bid)} <small>points</small></dd></div>
+        <div><dt>Squad</dt><dd>{team.roster.length} <small>players</small></dd></div>
       </dl>
-      <div className="squad-meter" aria-label={`${team.roster.length} of ${state.squad_size} places filled`}><span style={{ width: `${state.squad_size ? Math.min(100, team.roster.length / state.squad_size * 100) : 0}%` }} /></div>
+      <div className="squad-meter" aria-label={`${team.spent} of 1000 points spent`}><span style={{ width: `${Math.min(100, team.spent / 10)}%` }} /></div>
       <ul className="position-counts" aria-label="Players by position">{counts.map(([position, count]) => <li key={position}><b>{count}</b> {position}</li>)}</ul>
     </div>
     {captain && <p className="team-captain"><CaptainBadge /> Captain <strong>{captain.name}</strong> · {captain.position} · {credits(captain.price)} points</p>}
@@ -120,10 +119,28 @@ export function TeamDetail({ state, teamId, onBack, onOpen, onPlayer }: {
         <div><span className={`position-pill pos-${player.position.toLowerCase()}`}>{player.position}</span>{player.captain && <CaptainBadge />}<h3>{player.name}</h3>
           <p><b>{credits(player.price)}</b> points{player.captain ? ' · Captain' : ''}</p></div>
       </button>)}
-      {openSlots.map((_, index) => <div key={`open-${index}`} className="squad-player open-slot" aria-label="Open squad slot"><span>Open slot</span><small>Still to sign</small></div>)}
     </div>
     {!team.roster.length && <p className="empty">No signings yet. Players bought by {team.name} will appear here live.</p>}
   </section>
+}
+
+export function TeamDialog({ state, teamId, onClose, onOpen, onPlayer }: {
+  state: AuctionState; teamId: number; onClose: () => void; onOpen: (id: number) => void; onPlayer: (id: number) => void
+}) {
+  const dialog = useRef<HTMLDialogElement>(null)
+  useEffect(() => {
+    const previous = document.activeElement as HTMLElement | null
+    const current = dialog.current
+    current?.showModal()
+    current?.querySelector<HTMLHeadingElement>('#team-detail-title')?.focus()
+    return () => { current?.close(); previous?.focus() }
+  }, [])
+  return <dialog ref={dialog} className="team-dialog" aria-label="Team squad details"
+    onCancel={(event) => { event.preventDefault(); onClose() }}
+    onClick={(event) => { if (event.target === event.currentTarget) onClose() }}>
+    <button type="button" className="secondary" onClick={onClose} aria-label="Close team details">Close team details</button>
+    <TeamDetail state={state} teamId={teamId} onBack={onClose} onOpen={onOpen} onPlayer={onPlayer} />
+  </dialog>
 }
 
 function download(state: AuctionState) {

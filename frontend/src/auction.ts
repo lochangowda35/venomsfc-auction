@@ -5,7 +5,7 @@ export const sets: SetName[] = ['GK', 'DEF', 'MID', 'ST', 'UNSOLD']
 export const setLabels: Record<SetName, string> = {
   GK: 'Set 1 · Goalkeepers', DEF: 'Set 2 · Defenders', MID: 'Set 3 · Midfielders', ST: 'Set 4 · Strikers', UNSOLD: 'Unsold',
 }
-export const captainLimit = (squadSize: number) => 1000 - 10 * (squadSize - 1)
+export const captainLimit = () => 1000
 
 /** Every player shown in a set grid: waiting, current and already sold. Captains are not auctioned. */
 export function setMembers(state: AuctionState, set: SetName): Player[] {
@@ -30,20 +30,14 @@ export const availablePlayers = (state: AuctionState) => state.players.filter((p
 export function bidBlockReason(state: AuctionState, team: Team): string | null {
   if (state.status !== 'running') return 'Auction is not live'
   if (!state.current) return 'Choose a player first'
-  if (team.remaining_slots <= 0) return 'Squad full'
   if (state.current.team_id === team.id) return 'Leading bid'
-  if (state.current.bid + 10 > team.max_bid) return 'Reserve / budget limit'
+  if (state.current.bid + 10 > team.max_bid) return 'Budget limit'
   return null
 }
 
 export function setupProblems(state: AuctionState): string[] {
   const problems: string[] = []
   if (state.teams.length !== 5) problems.push(`Add exactly five teams (${state.teams.length}/5 ready).`)
-  if (!Number.isInteger(state.squad_size) || state.squad_size < 1 || state.squad_size > 100) {
-    problems.push('Choose a squad size between 1 and 100.')
-  }
-  const needed = 5 * state.squad_size
-  if (state.players.length < needed) problems.push(`Add ${needed - state.players.length} more players for ${state.squad_size} per team (${needed} total).`)
   if (state.teams.some((t) => !mediaPath.test(t.logo_path))) problems.push('Re-upload team logos that are missing or from the old demo.')
   if (state.players.some((p) => !mediaPath.test(p.photo_path))) problems.push('Re-upload player photos that are missing or from the old demo.')
   const withCaptain = state.teams.filter((t) => t.roster.some((r) => r.captain)).length
@@ -68,7 +62,9 @@ export function eventDescription(state: AuctionState): string {
     case 'start': return 'The auction is live!'
     case 'undo': return 'Latest change reversed · state restored'
     case 'configure': return `Squad size set to ${state.squad_size}`
-    case 'profile': return 'Auction setup updated. Matchday is getting closer.'
+    case 'profile': return 'Team or player profile updated.'
+    case 'assign': return `${player} assigned to ${team} · ${credits(event.amount ?? 0)} points`
+    case 'complete': return 'Auction completed by the host. Results are saved.'
     case 'captain': return `${player} named captain of ${team}${event.amount !== undefined ? ` · ${credits(event.amount)} points` : ''}`
     case 'remove_captain': return `${team} captain cleared`
     case 'open_set': return `${event.set_name ? setLabels[event.set_name] : 'Set'} is open`

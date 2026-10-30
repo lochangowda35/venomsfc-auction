@@ -23,8 +23,9 @@ def protect_profiles():
         error = check_csrf()
         if error:
             return error
-        if current_app.config["OFFICIAL_TEAMS"] and request.path.startswith("/api/teams"):
-            return jsonify(error="The five official teams are fixed for this auction."), 409
+        if (current_app.config["OFFICIAL_TEAMS"] and request.path.startswith("/api/teams")
+                and request.method in {"POST", "DELETE"}):
+            return jsonify(error="Keep the five existing teams. Their names and logos can be edited."), 409
 
 
 @profiles.after_request
@@ -38,7 +39,8 @@ def validate_profile(fields):
     if not isinstance(data, dict):
         return None, {"body": "Provide a JSON object."}
     errors = {}
-    for field in data.keys() - fields.keys():
+    allowed = set(fields) | ({"expected_version"} if request.method == "PUT" else set())
+    for field in data.keys() - allowed:
         errors[field] = "Unknown field."
     cleaned = {}
     for field, limit in fields.items():
@@ -116,14 +118,16 @@ def lock_setup():
     return record
 
 
-def profile_changed(record, kind, operation):
+def profile_changed(record, kind, operation, details=None):
     before = deepcopy(record.state)
     state = deepcopy(before)
     state["last_event"] = {"action": "profile", "kind": kind, "operation": operation}
+    if details:
+        state["last_event"]["profile_id"] = details["profile_id"]
     record.state = state
     record.version += 1
     db.session.add(AuctionEvent(
-        request_id=secrets.token_hex(24), payload={}, action="profile", before=before,
+        request_id=secrets.token_hex(24), payload=details or {}, action="profile", before=before,
         after=deepcopy(state), version=record.version, undone=False,
         created_at=datetime.now(timezone.utc),
     ))
@@ -134,9 +138,18 @@ def change_profile(model, fields, record_id, singular):
         data, errors = validate_profile(fields)
         if errors:
             return jsonify(error=f"Invalid {singular} profile.", fields=errors), 400
-    record = lock_setup()
-    if record is None:
-        return jsonify(error="Profiles cannot change after the auction starts."), 409
+    record = locked_auction()
+    if request.method == "DELETE" and record.state["status"] != "setup":
+        db.session.rollback()
+        return jsonify(error="Profiles cannot be deleted after starting. Edit the profile instead."), 409
+    if request.method == "PUT":
+        version = request.get_json().get("expected_version")
+        if version is not None and (type(version) is not int or version < 0):
+            db.session.rollback()
+            return jsonify(error="expected_version must be a nonnegative integer."), 400
+        if version != record.version and (version is not None or record.state["status"] != "setup"):
+            db.session.rollback()
+            return jsonify(error="Auction changed or version is missing. Reopen the editor and retry."), 409
     profile = db.session.get(model, record_id)
     if profile is None:
         db.session.rollback()
@@ -152,9 +165,13 @@ def change_profile(model, fields, record_id, singular):
         profile_changed(record, singular, "delete")
         db.session.commit()
         return jsonify(deleted=record_id)
+    before_profile = serialize_profile(profile, fields)
     for key, value in data.items():
         setattr(profile, key, value)
-    profile_changed(record, singular, "edit")
+    profile_changed(record, singular, "edit", {
+        "profile_id": profile.id, "before_profile": before_profile,
+        "after_profile": serialize_profile(profile, fields),
+    })
     db.session.commit()
     return jsonify({singular: serialize_profile(profile, fields)})
 

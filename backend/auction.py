@@ -51,10 +51,8 @@ def team_totals(state, team_id):
     purchases = [sale for sale in state["sales"].values() if sale["team_id"] == team_id]
     captain = state.get("captains", {}).get(str(team_id))
     spent = sum(sale["price"] for sale in purchases) + (captain["price"] if captain else 0)
-    slots = state["squad_size"] - len(purchases) - (1 if captain else 0)
     budget = BUDGET - spent
-    maximum = min(budget, budget - 10 * (slots - 1)) if slots > 0 else 0
-    return spent, budget, slots, maximum
+    return spent, budget, None, budget
 
 
 def captain_ids(state):
@@ -97,6 +95,7 @@ def snapshot(record=None):
             "price": sale["price"] if sale else None,
             "captain": captain_team is not None,
             "bids": sale.get("bids", []) if sale else [],
+            "manual_assignment": sale.get("manual_assignment", False) if sale else False,
         })
     team_rows = []
     for team in teams:
@@ -114,7 +113,7 @@ def snapshot(record=None):
     return {
         "version": record.version if record else 0,
         "fixed_teams": current_app.config["OFFICIAL_TEAMS"],
-        "status": state["status"], "squad_size": state["squad_size"],
+        "status": state["status"], "squad_size": state["squad_size"], "squad_limit": None,
         "open_set": state.get("open_set"),
         "current": current, "teams": team_rows, "players": player_rows,
         "last_event": state.get("last_event"),
@@ -136,10 +135,6 @@ def positive_id(data, key):
     return value
 
 
-def captain_limit(squad_size):
-    return BUDGET - 10 * (squad_size - 1)
-
-
 def apply_action(state, data):
     action = data["action"]
     state.setdefault("captains", {})
@@ -150,9 +145,6 @@ def apply_action(state, data):
         size = positive_id(data, "squad_size")
         if size > 100:
             raise RuleError("Squad size must be between 1 and 100.", 400)
-        if any(c["price"] > captain_limit(size) for c in state["captains"].values()):
-            raise RuleError(f"A captain price is above {captain_limit(size)} points, the limit for "
-                            f"{size} players per team. Lower that captain price first.")
         state["squad_size"] = size
     elif action == "captain":
         if state["status"] != "setup":
@@ -166,10 +158,9 @@ def apply_action(state, data):
             raise RuleError("Player not found.", 404)
         if type(price) is not int or price < 10 or price % 10:
             raise RuleError("Captain price must be a multiple of 10, minimum 10.", 400)
-        limit = captain_limit(state["squad_size"])
+        limit = BUDGET
         if price > limit:
-            raise RuleError(f"Captain price can be at most {limit} points so 10 points stay "
-                            "reserved for every other squad slot.")
+            raise RuleError(f"Captain price can be at most {limit} points.")
         other = captain_ids(state).get(player_id)
         if other is not None and other != team_id:
             raise RuleError("This player is already another team's captain.")
@@ -187,16 +178,8 @@ def apply_action(state, data):
         players = db.session.scalars(select(Player)).all()
         if len(teams) != 5:
             raise RuleError("Exactly five teams are required.")
-        if current_app.config["OFFICIAL_TEAMS"]:
-            from branding import OFFICIAL_TEAMS
-            if {team.name: team.logo_path for team in teams} != {
-                name: f"/api/branding/{file}" for name, file in OFFICIAL_TEAMS
-            }:
-                raise RuleError("Prepare the five official teams before starting.")
         if {int(team_id) for team_id in state["captains"]} != {team.id for team in teams}:
             raise RuleError("Assign a captain and captain price for all five teams before starting.")
-        if len(players) < 5 * state["squad_size"]:
-            raise RuleError(f"At least {5 * state['squad_size']} players are required.")
         from media import valid_media_path
         if any(not valid_media_path(team.logo_path) for team in teams):
             raise RuleError("Upload a valid logo for every team before starting.")
@@ -206,8 +189,46 @@ def apply_action(state, data):
         ):
             raise RuleError("Every player needs an uploaded photo and GK/DEF/MID/ST position.")
         state["status"] = "running"
-        if all(team_totals(state, team.id)[2] == 0 for team in teams):
-            state["status"] = "completed"
+    elif action == "complete":
+        if state["status"] == "completed":
+            raise RuleError("The auction is already completed.")
+        if state["current"]:
+            pid = state["current"]["player_id"]
+            if pid not in state["unsold"]:
+                state["unsold"].append(pid)
+        state["current"] = None
+        state["open_set"] = None
+        state["status"] = "completed"
+    elif action == "assign":
+        if state["status"] == "setup":
+            raise RuleError("Start the auction before recording manual results.")
+        if state["current"]:
+            raise RuleError("Resolve or undo the current player before correcting team assignments.")
+        player_id = positive_id(data, "player_id")
+        team_id = positive_id(data, "team_id")
+        if db.session.get(Player, player_id) is None:
+            raise RuleError("Player not found.", 404)
+        if db.session.get(Team, team_id) is None:
+            raise RuleError("Team not found.", 404)
+        price = data.get("price")
+        if type(price) is not int or price < 10 or price % 10:
+            raise RuleError("Final price must be a multiple of 10, minimum 10.", 400)
+        old_captain_team = captain_ids(state).get(player_id)
+        if old_captain_team is not None and old_captain_team != team_id and str(team_id) in state["captains"]:
+            raise RuleError("The destination team already has a captain. Captain assignments were not changed.")
+        old_sale = state["sales"].pop(str(player_id), None)
+        if old_captain_team is not None:
+            del state["captains"][str(old_captain_team)]
+        if price > team_totals(state, team_id)[1]:
+            raise RuleError("Final price exceeds this team's remaining 1000-point budget.")
+        if old_captain_team is not None:
+            state["captains"][str(team_id)] = {"player_id": player_id, "price": price}
+        else:
+            state["sales"][str(player_id)] = {
+                **(old_sale or {}), "team_id": team_id, "price": price,
+                "bids": (old_sale or {}).get("bids", []), "manual_assignment": True,
+            }
+        state["unsold"] = [pid for pid in state["unsold"] if pid != player_id]
     elif action == "pause":
         if state["status"] != "running":
             raise RuleError("Only a running auction can be paused.")
@@ -266,28 +287,23 @@ def apply_action(state, data):
                 if current["team_id"] == team_id:
                     raise RuleError("The leading team cannot bid against itself.")
                 next_bid = current["bid"] + 10
-                _, _, slots, maximum = team_totals(state, team_id)
-                if slots <= 0:
-                    raise RuleError("This team's squad is full.")
+                _, _, _, maximum = team_totals(state, team_id)
                 if next_bid > maximum:
-                    raise RuleError("Bid exceeds the budget after reserving 10 per unfilled slot.")
+                    raise RuleError("Bid exceeds this team's remaining budget.")
                 current["team_id"] = team_id
                 current["bid"] = next_bid
                 current.setdefault("bids", []).append({"team_id": team_id, "amount": next_bid})
             elif action == "sold":
                 if current["team_id"] is None or current["bid"] < 10:
                     raise RuleError("A valid opening bid is required before selling.")
-                _, _, slots, maximum = team_totals(state, current["team_id"])
-                if slots <= 0 or current["bid"] > maximum:
-                    raise RuleError("Team budget or squad capacity changed; cannot sell.")
+                _, _, _, maximum = team_totals(state, current["team_id"])
+                if current["bid"] > maximum:
+                    raise RuleError("Team budget changed; cannot sell.")
                 state["sales"][str(current["player_id"])] = {
                     "team_id": current["team_id"], "price": current["bid"],
                     "bids": current.get("bids", []),
                 }
                 state["current"] = None
-                teams = db.session.scalars(select(Team)).all()
-                if all(team_totals(state, team.id)[2] == 0 for team in teams):
-                    state["status"] = "completed"
             elif action == "unsold":
                 state["unsold"].append(current["player_id"])
                 state["current"] = None
@@ -328,7 +344,8 @@ def history():
     return jsonify(events=[{
         "id": event.id, "action": event.action,
         "created_at": event.created_at.isoformat(), "undone": event.undone,
-        "summary": event.after.get("last_event"),
+        "summary": {**(event.after.get("last_event") or {}),
+                    **(event.payload if event.action == "profile" else {})},
     } for event in events])
 
 
@@ -371,6 +388,7 @@ def mutate():
         "open_set": {"set_name"}, "close_set": set(),
         "random": set(), "bid": {"team_id"}, "sold": set(), "unsold": set(),
         "pause": set(), "resume": set(), "undo": set(), "reauction": {"player_id"},
+        "complete": set(), "assign": {"player_id", "team_id", "price"},
     }
     if not isinstance(action, str) or action not in fields:
         raise RuleError("Unknown auction action.", 400)
@@ -422,6 +440,14 @@ def mutate():
             summary = {"action": action, "team_id": data["team_id"]}
             if action == "captain":
                 summary.update(player_id=data["player_id"], amount=data["price"])
+        if action == "assign":
+            old_team = captain_ids(before).get(data["player_id"])
+            old_sale = before["sales"].get(str(data["player_id"]))
+            summary = {"action": action, "player_id": data["player_id"],
+                       "team_id": data["team_id"], "amount": data["price"],
+                       "previous_team_id": old_team if old_team is not None else (old_sale or {}).get("team_id"),
+                       "previous_price": before["captains"][str(old_team)]["price"]
+                       if old_team is not None else (old_sale or {}).get("price")}
         if action in {"open_set", "close_set"}:
             summary["set_name"] = data.get("set_name", before.get("open_set"))
         summary.pop("bids", None)

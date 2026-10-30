@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { request } from './api'
 import { credits } from './auction'
-import { Results, Stage, TeamBoard, TeamDetail } from './Board'
+import { Results, Stage, TeamBoard, TeamDialog } from './Board'
 import { PlayerDialog, SetsBoard } from './Sets'
 import { SoldCelebration } from './Celebration'
 import { ConfirmDialog, Login } from './components'
-import { History, HostControls } from './HostControls'
+import { History, HostControls, ManualAssignments } from './HostControls'
 import { Setup } from './Setup'
 import type { SaveProfile } from './Setup'
 import type { Player, Team } from './types'
@@ -72,14 +72,13 @@ function App() {
       window.removeEventListener('scroll', fit)
     }
   }, [tvReady])
-  const [teamId, setTeamId] = useState<number | null>(() => privateView ? null : teamFromUrl())
+  const [teamId, setTeamId] = useState<number | null>(teamFromUrl)
   const returnFocus = useRef<number | null>(null)
   useEffect(() => {
-    if (privateView) return
     const sync = () => setTeamId(teamFromUrl())
     window.addEventListener('popstate', sync)
     return () => window.removeEventListener('popstate', sync)
-  }, [privateView])
+  }, [])
   useEffect(() => {
     if (teamId !== null || returnFocus.current === null) return
     const id = returnFocus.current
@@ -87,19 +86,18 @@ function App() {
     document.querySelector<HTMLButtonElement>(`.team-open[data-team-id="${id}"]`)?.focus()
   }, [teamId])
   const openTeam = useCallback((id: number) => {
-    window.history.pushState({ team: id, fromList: true }, '', `/?team=${id}`)
+    window.history.pushState({ team: id, fromList: true }, '', `${window.location.pathname}?team=${id}`)
     setTeamId(id)
-    window.scrollTo({ top: 0 })
   }, [])
   const switchTeam = useCallback((id: number) => {
-    window.history.replaceState({ ...(window.history.state ?? {}), team: id }, '', `/?team=${id}`)
+    window.history.replaceState({ ...(window.history.state ?? {}), team: id }, '', `${window.location.pathname}?team=${id}`)
     setTeamId(id)
   }, [])
   const closeTeam = useCallback(() => {
     returnFocus.current = teamId
     setTeamId(null)
     if (window.history.state?.fromList) window.history.back()
-    else window.history.replaceState(null, '', '/')
+    else window.history.replaceState(null, '', window.location.pathname)
   }, [teamId])
   useEffect(() => {
     const closeOutside = (event: PointerEvent) => {
@@ -137,8 +135,8 @@ function App() {
     await request(`/api/${kind}${id === undefined ? '' : `/${id}`}`, {
       method: id === undefined ? 'POST' : 'PUT', csrf,
       body: kind === 'teams'
-        ? { name: input.name, logo_path: image }
-        : { name: input.name, photo_path: image, position: input.position },
+        ? { name: input.name, logo_path: image, ...(id === undefined ? {} : { expected_version: input.expectedVersion }) }
+        : { name: input.name, photo_path: image, position: input.position, ...(id === undefined ? {} : { expected_version: input.expectedVersion }) },
     })
   }, 'Profile saved.')
 
@@ -205,21 +203,24 @@ function App() {
         <button type="button" className={`sound-toggle ${soundOn ? 'on' : ''}`} onClick={toggleSound} aria-pressed={soundOn}>
           {soundOn ? (soundUnlocked ? '🔊 Sound on' : '🔈 Click anywhere to enable sound') : '🔇 Sound off'}</button>
         <span>Move this window to the TV, then press F11 for full-screen.</span></div>}
-      {!privateView && state && teamId !== null && <TeamDetail state={state} teamId={teamId} onBack={closeTeam} onOpen={switchTeam} onPlayer={setPlayerId} />}
-      {authorized && state && (privateView || teamId === null) && <>
+      {authorized && state && <>
         <div className="overview-bar"><p><span className="eyebrow">{host ? 'Matchday operations' : 'Follow every signing'}</span></p>
           <div><span><strong>{state.teams.length}</strong> clubs</span><span><strong>{state.players.filter((p) => p.status === 'sold').length}</strong> signed</span><span><strong>{credits(state.players.filter((p) => p.status === 'sold').reduce((sum, p) => sum + (p.price ?? 0), 0))}</strong> points spent</span></div></div>
         {host && session?.authenticated && state.status === 'setup'
           ? <Setup state={state} disabled={!canMutate} save={save} remove={remove}
-            configure={(size) => auction.action('configure', { squad_size: size })}
             setCaptain={(teamId, playerId, price) => auction.action('captain', { team_id: teamId, player_id: playerId, price })}
             removeCaptain={(teamId) => auction.action('remove_captain', { team_id: teamId })}
             start={() => setConfirmation({
-              title: 'Ready to start the auction?', body: `This locks profile editing. Five teams will each build a squad of ${state.squad_size}. Make sure all names, positions and uploaded images are correct.`,
+              title: 'Ready to start the auction?', body: 'Five teams have 1000 points each, including captain prices. Squads have no size limit. Names, photos and results can still be corrected after starting.',
               confirm: 'Start auction', perform: () => { void auction.action('start', {}, state.version) },
             })} />
           : !tv && <Stage state={state} />}
         {host && session?.authenticated && state.status !== 'setup' && <HostControls state={state} disabled={!canMutate} action={auction.action}
+          complete={() => setConfirmation({
+            title: 'Complete this auction?',
+            body: 'Bidding will close, regardless of how many players are sold or unsold. Existing sales, captains, budgets and history are kept. Any player still on the floor will be marked unsold. Team/player profiles and manual results remain editable.',
+            confirm: 'Complete auction', perform: () => { void auction.action('complete', {}, state.version) },
+          })}
           undo={() => setConfirmation({
             title: 'Undo the latest action?', body: 'Only the most recent reversible action is restored, including any bid, roster or budget changes. The reversal remains in the host audit trail. Check the latest entry below before continuing.',
             confirm: 'Undo latest action', perform: () => { void auction.action('undo', {}, state.version) },
@@ -234,6 +235,19 @@ function App() {
               }, 'Auction deleted. Players, teams, squad size and captains were kept.')
             },
           })} />}
+        {host && session?.authenticated && state.status !== 'setup' && <>
+          <ManualAssignments key={state.version} state={state} disabled={!canMutate} assign={(playerId, teamId, price, version) => setConfirmation({
+            title: 'Save this player assignment?',
+            body: `${state.players.find((p) => p.id === playerId)?.name} → ${state.teams.find((t) => t.id === teamId)?.name} for ${credits(price)} points. Any previous team is refunded. The change is recorded in history and can be undone.`,
+            confirm: 'Save assignment', perform: () => { void auction.action('assign', { player_id: playerId, team_id: teamId, price }, version) },
+          })} />
+          <details className="profile-management"><summary>Edit teams and player profiles</summary>
+            <p className="muted">Correct names, positions, photos and logos. Existing sales, captains and bids are preserved. Cancel and reopen an editor if the auction changes while editing.</p>
+            <Setup manage state={state} disabled={!canMutate} save={save} remove={remove}
+              start={() => undefined} setCaptain={(teamId, playerId, price) => auction.action('captain', { team_id: teamId, player_id: playerId, price })}
+              removeCaptain={(teamId) => auction.action('remove_captain', { team_id: teamId })} />
+          </details>
+        </>}
         {!privateView && <TeamBoard state={state} onOpen={openTeam} />}
         {!(host && session?.authenticated && state.status === 'setup') && !tv && <SetsBoard state={state} onPlayer={setPlayerId} />}
         {tv ? <div className="tv-layout">
@@ -242,14 +256,15 @@ function App() {
             <SetsBoard state={state} onPlayer={setPlayerId} />
             <Results state={state} onPlayer={setPlayerId} />
           </div>
-          <aside className="tv-side" aria-label="Squad watch" ref={tvSide}><TeamBoard state={state} compact /></aside>
-        </div> : privateView && <TeamBoard state={state} />}
+          <aside className="tv-side" aria-label="Squad watch" ref={tvSide}><TeamBoard state={state} onOpen={openTeam} compact /></aside>
+        </div> : privateView && <TeamBoard state={state} onOpen={openTeam} />}
         {!(host && session?.authenticated && state.status === 'setup') && !tv && <Results state={state} onPlayer={setPlayerId} />}
         {host && session?.authenticated && <History version={state.version} />}
       </>}
       {authorized && !state && <section className="panel waiting-screen"><span className="eyebrow">Venoms FC / Matchday</span><h1>The room is warming up.</h1><p className="muted">Teams, live bids and signings will appear as soon as the local server connects.</p></section>}
     </main>
     <footer className="site-footer"><span>VENOMS FC <b>/</b> INTERNAL CUP · 3RD EDITION</span><span>{privateView ? tv ? 'Host-only TV · read-only' : 'Private host access' : 'Spectator view · no sign-in required'}{authorized && state ? ` · v${state.version}` : ''}</span></footer>
+    {authorized && state && teamId !== null && <TeamDialog state={state} teamId={teamId} onClose={closeTeam} onOpen={switchTeam} onPlayer={setPlayerId} />}
     {authorized && state && playerId !== null && <PlayerDialog state={state} playerId={playerId} onClose={() => setPlayerId(null)} />}
     {!host && authorized && state && <SoldCelebration state={state} sound={tv && soundOn && soundUnlocked} />}
     {host && authorized && confirmation && <ConfirmDialog title={confirmation.title} confirm={confirmation.confirm} onClose={() => setConfirmation(null)}

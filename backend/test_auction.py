@@ -126,9 +126,10 @@ class AuctionFlowTests(unittest.TestCase):
         self.action("reauction", player_id=second)
         for index in range(1, 5):
             self.action("select", player_id=state["players"][index]["id"])
-            self.action("bid", status=409, team_id=state["teams"][0]["id"])
             self.action("bid", team_id=state["teams"][index]["id"])
             self.action("sold")
+        self.assertEqual(self.state()["status"], "running")
+        self.action("complete")
         self.assertEqual(self.state()["status"], "completed")
         self.assertEqual(sum(p["status"] == "available" for p in self.state()["players"]), 1)
         self.action("select", status=409, player_id=state["players"][-1]["id"])
@@ -143,29 +144,28 @@ class AuctionFlowTests(unittest.TestCase):
         self.assertEqual(image_response.status_code, 200)
         image_response.close()
 
-    def test_budget_reserve_jump_bids_and_full_capacity(self):
+    def test_budget_has_no_slot_reserve_and_jump_bids_are_rejected(self):
         state = self.setup_profiles(squad_size=2)
         self.start()
         self.action("select", player_id=state["players"][0]["id"])
         teams = state["teams"]
-        # Captains cost 10, leaving 990. Alternate exact +10 bids; 10 stays reserved for one more slot.
-        for index in range(98):
+        # Captains cost 10, leaving 990. No points are reserved for squad slots.
+        for index in range(99):
             self.action("bid", team_id=teams[index % 2]["id"])
-        self.assertEqual(self.state()["current"]["bid"], 980)
-        self.action("bid", status=409, team_id=teams[0]["id"])
+        self.assertEqual(self.state()["current"]["bid"], 990)
+        self.action("bid", status=409, team_id=teams[1]["id"])
         self.action("sold")
-        self.assertEqual(self.state()["teams"][1]["budget"], 10)
-        self.assertEqual(self.state()["teams"][1]["max_bid"], 10)
+        self.assertEqual(self.state()["teams"][0]["budget"], 0)
+        self.assertEqual(self.state()["teams"][0]["max_bid"], 0)
         self.action("select", player_id=state["players"][1]["id"])
         response = self.client.post("/api/auction/actions", headers=self.headers, json={
             "action": "bid", "team_id": teams[1]["id"], "amount": 500,
             "expected_version": self.state()["version"], "request_id": secrets.token_hex(16),
         })
         self.assertEqual(response.status_code, 400)
+        self.action("bid", status=409, team_id=teams[0]["id"])
         self.action("bid", team_id=teams[1]["id"])
-        self.action("sold")
-        self.assertEqual(self.state()["teams"][1]["budget"], 0)
-        self.assertEqual(self.state()["teams"][1]["remaining_slots"], 0)
+        self.assertIsNone(self.state()["teams"][1]["remaining_slots"])
 
     def test_idempotency_stale_versions_and_restart(self):
         state = self.setup_profiles()
@@ -187,7 +187,7 @@ class AuctionFlowTests(unittest.TestCase):
         self.action("undo")
         self.assertIsNone(self.state()["current"])
 
-    def test_setup_validation_edit_delete_and_freeze(self):
+    def test_setup_validation_and_versioned_edits_after_start(self):
         self.action("start", status=409)
         self.action("configure", status=400, squad_size=True)
         state = self.setup_profiles()
@@ -206,6 +206,9 @@ class AuctionFlowTests(unittest.TestCase):
         self.action("start")
         self.assertEqual(self.client.put(f"/api/teams/{team_id}", headers=self.headers,
             json={"name": "Forbidden", "logo_path": self.path}).status_code, 409)
+        self.assertEqual(self.client.put(f"/api/teams/{team_id}", headers=self.headers,
+            json={"name": "Allowed correction", "logo_path": self.path,
+                  "expected_version": self.state()["version"]}).status_code, 200)
         self.assertEqual(self.client.delete(
             f"/api/teams/{team_id}", headers=self.headers).status_code, 409)
         self.action("configure", status=409, squad_size=2)
@@ -273,13 +276,12 @@ class AuctionFlowTests(unittest.TestCase):
         spare = state["players"][0]["id"]
         self.action("captain", status=400, team_id=team, player_id=spare, price=15)
         self.action("captain", status=400, team_id=team, player_id=spare, price=0)
-        # Squad of 4 (captain + 3): limit is 1000 - 3 * 10 = 970.
-        self.action("captain", status=409, team_id=team, player_id=spare, price=980)
+        self.action("captain", status=409, team_id=team, player_id=spare, price=1010)
         self.action("captain", status=409, team_id=other, player_id=captain["id"], price=10)
-        self.action("captain", team_id=team, player_id=spare, price=970)
+        self.action("captain", team_id=team, player_id=spare, price=1000)
         row = next(t for t in self.state()["teams"] if t["id"] == team)
-        self.assertEqual((row["budget"], row["max_bid"], row["remaining_slots"]), (30, 10, 3))
-        self.action("configure", status=409, squad_size=5)
+        self.assertEqual((row["budget"], row["max_bid"], row["remaining_slots"]), (0, 0, None))
+        self.action("configure", squad_size=5)
         self.action("remove_captain", team_id=team)
         self.action("start", status=409)
         self.action("captain", team_id=team, player_id=captain["id"], price=10)
@@ -287,6 +289,147 @@ class AuctionFlowTests(unittest.TestCase):
         self.action("captain", status=409, team_id=team, player_id=spare, price=10)
         players = self.state()["players"]
         self.assertTrue(all(p["status"] == "sold" for p in players if p["captain"]))
+
+    def test_more_than_four_players_including_captain_never_fills_squad(self):
+        state = self.setup_profiles()
+        team = state["teams"][0]["id"]
+        self.start()
+        for player in state["players"]:
+            self.action("select", player_id=player["id"])
+            self.action("bid", team_id=team)
+            self.action("sold")
+        club = self.state()["teams"][0]
+        self.assertEqual(len(club["roster"]), len(state["players"]) + 1)
+        self.assertGreater(len(club["roster"]), 4)
+        self.assertEqual(club["max_bid"], club["budget"])
+        self.assertIsNone(club["remaining_slots"])
+        self.assertEqual(self.state()["status"], "running")
+
+    def test_manual_assignments_refund_budget_preserve_bids_and_are_undoable(self):
+        state = self.setup_profiles()
+        pid = state["players"][0]["id"]
+        first, second = [t["id"] for t in state["teams"][:2]]
+        self.start()
+        self.action("select", player_id=pid)
+        self.action("bid", team_id=first)
+        self.action("bid", team_id=second)
+        self.action("sold")
+        before = self.state()
+        bids = next(p["bids"] for p in before["players"] if p["id"] == pid)
+        self.action("pause")
+        version = self.state()["version"]
+        payload = {"action": "assign", "player_id": pid, "team_id": first, "price": 50,
+                   "request_id": secrets.token_hex(16), "expected_version": version}
+        for _ in range(2):
+            response = self.client.post("/api/auction/actions", headers=self.headers, json=payload)
+            self.assertEqual(response.status_code, 200, response.json)
+        after = self.state()
+        self.assertEqual(after["version"], version + 1)
+        player = next(p for p in after["players"] if p["id"] == pid)
+        self.assertEqual((player["team_id"], player["price"], player["bids"]), (first, 50, bids))
+        self.assertTrue(player["manual_assignment"])
+        self.assertEqual([t["budget"] for t in after["teams"][:2]], [940, 990])
+        self.action("assign", player_id=pid, team_id=first, price=990)
+        self.assertEqual(self.state()["teams"][0]["budget"], 0)
+        failed_before = self.state()
+        self.action("assign", status=409, player_id=state["players"][1]["id"], team_id=first, price=10)
+        self.assertEqual(self.state(), failed_before)
+        self.action("assign", status=400, player_id=pid, team_id=first, price=15)
+        self.action("assign", status=404, player_id=pid, team_id=9999, price=10)
+        stale = {**payload, "request_id": secrets.token_hex(16)}
+        self.assertEqual(self.client.post("/api/auction/actions", headers=self.headers, json=stale).status_code, 409)
+        self.action("undo")
+        self.assertEqual(next(p["price"] for p in self.state()["players"] if p["id"] == pid), 50)
+        self.action("undo")
+        restored = next(p for p in self.state()["players"] if p["id"] == pid)
+        self.assertEqual((restored["team_id"], restored["price"], restored["bids"]), (second, 20, bids))
+        self.assertFalse(restored["manual_assignment"])
+
+    def test_complete_early_keeps_sales_and_unsold_and_allows_manual_corrections(self):
+        state = self.setup_profiles()
+        self.start()
+        sold, unsold, current, waiting = state["players"][:4]
+        team = state["teams"][0]["id"]
+        self.action("select", player_id=sold["id"])
+        self.action("bid", team_id=team)
+        self.action("sold")
+        self.action("select", player_id=unsold["id"])
+        self.action("unsold")
+        self.action("select", player_id=current["id"])
+        self.action("bid", team_id=team)
+        self.action("assign", status=409, player_id=waiting["id"], team_id=team, price=10)
+        self.action("pause")
+        before = self.state()
+        self.action("complete")
+        completed = self.state()
+        self.assertEqual(completed["status"], "completed")
+        self.assertIsNone(completed["current"])
+        self.assertIsNone(completed["open_set"])
+        self.assertEqual([p["status"] for p in completed["players"][:4]], ["sold", "unsold", "unsold", "available"])
+        self.assertEqual(completed["teams"], before["teams"])
+        self.action("bid", status=409, team_id=team)
+        self.action("undo")
+        self.assertEqual(self.state()["current"], before["current"])
+        self.assertEqual(self.state()["status"], "paused")
+        self.action("complete")
+        self.action("assign", player_id=waiting["id"], team_id=team, price=30)
+        self.action("assign", player_id=unsold["id"], team_id=team, price=20)
+        self.assertEqual(self.state()["status"], "completed")
+        self.assertEqual(self.state()["teams"][0]["budget"], 930)
+        self.assertEqual(next(p["status"] for p in self.state()["players"] if p["id"] == unsold["id"]), "sold")
+
+    def test_complete_without_any_sales_or_filled_squads(self):
+        self.setup_profiles()
+        self.action("complete")
+        self.assertEqual(self.state()["status"], "completed")
+        self.action("complete", status=409)
+        self.action("undo")
+        self.assertEqual(self.state()["status"], "setup")
+        self.action("start")
+        self.action("complete")
+        self.assertEqual(self.state()["status"], "completed")
+
+    def test_active_profile_edits_keep_results_and_record_before_after(self):
+        state = self.setup_profiles()
+        self.start()
+        pid, team = state["players"][0]["id"], state["teams"][0]["id"]
+        self.action("select", player_id=pid)
+        self.action("bid", team_id=team)
+        self.action("sold")
+        before = self.state()
+        self.app.config["OFFICIAL_TEAMS"] = True
+        for kind, record_id, data in (
+            ("teams", team, {"name": "Corrected official team", "logo_path": self.path}),
+            ("players", pid, {"name": "Corrected player", "photo_path": self.path, "position": "DEF"}),
+        ):
+            data["expected_version"] = self.state()["version"]
+            response = self.client.put(f"/api/{kind}/{record_id}", headers=self.headers, json=data)
+            self.assertEqual(response.status_code, 200, response.json)
+            stale = self.client.put(f"/api/{kind}/{record_id}", headers=self.headers, json=data)
+            self.assertEqual(stale.status_code, 409)
+        after = self.state()
+        self.assertEqual(after["players"][0]["price"], before["players"][0]["price"])
+        self.assertEqual(after["players"][0]["bids"], before["players"][0]["bids"])
+        self.assertEqual(after["teams"][0]["budget"], before["teams"][0]["budget"])
+        self.assertEqual(after["teams"][0]["roster"][0]["name"], "Corrected player")
+        event = db.session.scalars(select(AuctionEvent).where(AuctionEvent.action == "profile").order_by(AuctionEvent.id.desc())).first()
+        self.assertEqual(event.payload["before_profile"]["name"], "Player 0")
+        self.assertEqual(event.payload["after_profile"]["name"], "Corrected player")
+        self.assertNotIn("before_profile", after["last_event"])
+        history = self.client.get("/api/auction/history").json["events"]
+        self.assertEqual(history[0]["summary"]["after_profile"]["name"], "Corrected player")
+        self.action("undo", status=409)
+        self.assertEqual(self.app.test_client().put(f"/api/players/{pid}", json={}).status_code, 401)
+
+    def test_captain_corrections_never_overwrite_another_captain(self):
+        state = self.setup_profiles()
+        self.start()
+        captain = next(p for p in self.state()["players"] if p["captain"])
+        before = self.state()
+        self.action("assign", status=409, player_id=captain["id"], team_id=state["teams"][1]["id"], price=10)
+        self.assertEqual(self.state(), before)
+        self.action("assign", player_id=captain["id"], team_id=captain["team_id"], price=30)
+        self.assertEqual(self.state()["teams"][0]["budget"], 970)
 
     def test_sets_limit_selection_and_unsold_set(self):
         state = self.setup_profiles(squad_size=1, extras=2)

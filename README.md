@@ -28,11 +28,11 @@ The compact view menu in the top-right corner contains Spectator / Host sign-in
 instead of taking a separate full-width row. Press Escape or click outside to
 close it. Budgets, bids, sales and CSV exports use **points**, not credits/CR;
 the starting budget remains **1000 points per team**.
-On the spectator view, click any team card to open its read-only team page
-(`/?team=<id>`): logo, remaining/spent/max-bid points, squad progress, position
-counts, and every signed player with photo, position and price. It updates live.
+In spectator, host and TV views, click any team card (including its logo) to open
+a live, read-only team popup: logo, remaining/spent/max-bid points, position
+counts, and every signed player with photo, position, captain badge and price.
 Use **← All teams**, Escape, or the browser Back button to return; the chips at the
-top switch between teams. Host and TV team cards stay non-clickable.
+top switch between teams. Clicking a player opens their details and bid history.
 These loopback URLs work only on this computer; viewing on another physical phone
 or TV over Wi-Fi needs a separately reviewed LAN configuration. For the public
 site, see [Going live](#going-live-on-wwwvenomsfcin).
@@ -104,10 +104,10 @@ save mobile data.
 
 ### Official branding and preset teams
 
-**BlackMambas, Cobras, Vipers, Pythons and Anacondas** have fixed official names
-and logos. They are not editable/deletable through the host desk or API.
-Player creation, uploaded photos, corrections, squad size, and all auction rules
-are unchanged. The full original banner is shown without cropping its lettering;
+**BlackMambas, Cobras, Vipers, Pythons and Anacondas** are the five preset teams.
+The host can edit their names and logos without changing team IDs or results;
+adding or deleting official teams remains blocked to preserve the lineup.
+The full original banner is shown without cropping its lettering;
 live TV uses a compact version to leave space for the auction.
 Desktop uses a balanced introduction/banner layout; mobile stacks the content.
 Glass surfaces use translucent fills, highlights and background blur, with
@@ -187,12 +187,12 @@ the built assets locally. `npm run preview` alone is not a full API server.
 1. Sign in at `/host`. The five official teams and logos are already prepared.
 2. Add players with names, uploaded photos, and **GK / DEF / MID / ST** positions.
    Edit or delete setup records to correct mistakes.
-3. Set the same squad size for all five teams. At least `5 * squad size`
-   players are required.
+3. Squads are **unlimited**, including captains. Existing saved squad-size
+   settings are retained for historical compatibility but no longer cap bids,
+   reserve points, require a minimum pool size, or trigger completion.
 4. **Captains:** in the Captains panel, pick each team's captain from the
    player pool and enter the captain price (a multiple of 10, from 10 up to
-   `1000 - 10 * (squad size - 1)`). The price comes out of that team's 1000
-   points and the captain fills one squad slot. Captains are not auctioned.
+   `1000`). The price comes out of that team's 1000 points. Captains are not auctioned.
    All five captains are required before **Start**.
 5. **Sets:** players are grouped into Set 1 Goalkeepers, Set 2 Defenders,
    Set 3 Midfielders, Set 4 Strikers, plus a final Unsold set. With no set
@@ -204,20 +204,37 @@ the built assets locally. `npm run preview` alone is not a full API server.
    **exactly +10**, with no jump bids or consecutive bids by the leading team.
 7. Mark **SOLD** to the leading team, or **UNSOLD**. Unsold players can be
    re-listed or selected again. Pause/resume when needed.
-8. Each team starts with **1000 points**. The server reserves **10 points per
-   remaining slot after a purchase** and prevents bids from full squads.
-   There are no position quotas. Team cards label this as
-   "10 reserved per open slot" under **Max bid**.
+8. Each team starts with **1000 points**, including its captain price.
+   **Max bid equals the remaining budget**. There are no reserved-slot deductions,
+   squad capacity limits, or position quotas. A team with fewer than 10 points
+   cannot place another bid.
 9. Undo reverses the latest dependent auction action first: a sale restores
    its player, bid, budget, and roster; further undos reverse prior bids and
    selection. Actions stay in the host audit history. Unsafe undo conflicts
    are explicit and do not overwrite later setup changes.
-10. The auction completes when all five squads are full. Extra profiles can
-   remain unauctioned. Results and rosters remain available. Clicking any
-   player card opens a popup with every bid of the round that sold them, in order.
+10. Use **Complete auction…** on the host desk to finish at any time. It asks
+    for confirmation, closes bidding and the open set, and marks any unresolved
+    current player unsold (without charging its leading bidder). All sales,
+    captains, earlier unsold results, waiting players and audit history are kept.
+    Completion is undoable, subject to the normal latest-action boundary.
 
-Profile edits are locked after start. To correct setup then, unwind dependent
-auction actions and the start action first. Reloading or restarting does not reset the auction.
+**Record manual results / move players:** use **Record / move a player** after
+starting, including while paused or completed. Choose any player, destination
+team and final price (a multiple of 10, minimum 10). The old team is refunded;
+the new team is charged, with the 1000-point budget enforced. Existing recorded
+bids are kept and explicitly labelled as original bids after a manual correction.
+Each assignment is version-checked, idempotent and audited; **Undo latest**
+reverses it. Resolve any current player first so existing bids are not invalidated.
+Captain price corrections keep their role; a captain cannot be moved onto a
+team that already has a captain.
+
+**Edit teams and player profiles:** expand this section on the host desk to edit
+names, positions, photos and logos during or after an auction. IDs and results
+are kept. Profile edits record before/after details in the audit trail, but are
+not undoable; correct them with another edit. They also prevent undo from
+overwriting earlier state across a profile change. If the auction changes while
+an editor is open, cancel and reopen it before saving. Profile creation/deletion
+remains setup-only. Reloading or restarting never resets the auction.
 
 **Delete auction (host desk).** Once an auction has started, the bottom of the host
 controls has a red **Delete auction…** button. You must type `DELETE` to confirm.
@@ -336,7 +353,7 @@ commit it, display its contents, or put secrets in frontend environment variable
 | Public | `GET /api/auction/state`, `GET /api/media/<generated-name>` |
 | Public | `GET /api/branding/<allowlisted-official-file>` |
 | Session | `GET /api/auth/session`, `POST /api/auth/login`, `POST /api/auth/logout` |
-| Host only | `GET /api/teams`, `GET/POST /api/players`, `PUT/DELETE /api/players/<id>` |
+| Host only | `GET /api/teams`, `PUT /api/teams/<id>`, `GET/POST /api/players`, `PUT/DELETE /api/players/<id>` |
 | Host only | `GET /api/auction/host-state`, `GET /api/auction/display-state` |
 | Host only | `POST /api/uploads`, `GET /api/auction/history`, `POST /api/auction/actions` |
 | Host only | `GET /api/auction/backup` (downloads a full JSON backup) |
@@ -346,10 +363,14 @@ Cookie-authenticated writes require `X-CSRF-Token` from session/login.
 Auction actions require `{action, expected_version, request_id, ...action_fields}`.
 The server supports `configure`, `captain`, `remove_captain`, `start`,
 `open_set`, `close_set`, `select`, `random`, `bid`, `sold`,
-`unsold`, `reauction`, `pause`, `resume`, and `undo`.
+`unsold`, `reauction`, `pause`, `resume`, `undo`, `complete`, and `assign`.
+`assign` takes `player_id`, `team_id` and `price`. `complete` takes no extra fields.
+Profile PUT requests take `expected_version` with the profile fields (required
+after starting, accepted during setup). Names/logos/photos are edited separately
+from result assignments, so neither operation silently overwrites the other.
 Malformed input returns 400, unauthenticated host access 401, CSRF failure 403,
 stale/conflicting actions 409, oversized uploads 413, and database failures 503.
-Team mutation attempts return 409 because the five official identities are fixed.
+Adding or deleting official teams returns 409; editing their names/logos is allowed.
 Profile errors include field messages. State/auth/host responses are not cached.
 Public state does not include password hashes, session tokens, or audit snapshots.
 
@@ -382,7 +403,8 @@ Remove-Item Env:\RUN_POSTGRES_TESTS
 
 The integration suite creates uniquely named isolated schemas and temporary
 upload folders, applies real migrations, and removes them afterward. It exercises
-all five squads, +10 bidding, reserve budgets, capacity, sale/unsold/reauction,
+all five squads, +10 bidding, unlimited capacity, budget/refund rules, sale/unsold/reauction,
+manual assignment and price corrections, profile edits and explicit completion,
 undo, stale/idempotent/concurrent commands, and application restart recovery
 without changing real auction records. Do not point generic tests or browser
 automation at a live auction.
@@ -415,7 +437,7 @@ Build the frontend first. In the test terminal, set `AUCTION_E2E_URL` to
 `http://127.0.0.1:5001`, `AUCTION_E2E_MUTATE` to `1`, and
 `AUCTION_E2E_PASSWORD` to that ephemeral test password; then run
 `npm run test:e2e` from `frontend`. The real-server test refuses port 5000 and
-requires empty profile tables unless its explicit test-fixture reuse flag is set.
+requires empty profile tables.
 It uploads generated test images, creates only clearly named fixture profiles,
 and exercises the UI in separate host/TV/mobile pages.
 

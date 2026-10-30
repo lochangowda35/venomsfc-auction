@@ -189,7 +189,7 @@ test('TV polling is authenticated and removes its board after logout elsewhere',
   expect(boardPaths.every((path) => path === '/api/auction/display-state')).toBe(true)
 })
 
-test('official setup locks team identities and explains the separate HDMI window', async ({ page }) => {
+test('official setup permits team corrections and explains the separate HDMI window', async ({ page }) => {
   const state = sampleState()
   state.status = 'setup'
   state.current = null
@@ -208,7 +208,10 @@ test('official setup locks team identities and explains the separate HDMI window
   })
   await page.goto('/host')
   await expect(page.locator('.setup-team')).toHaveCount(5)
-  await expect(page.locator('.setup-team button')).toHaveCount(0)
+  await expect(page.locator('.setup-team button')).toHaveCount(5)
+  await page.getByRole('button', { name: 'Edit team BlackMambas', exact: true }).click()
+  await expect(page.getByLabel('Team name', { exact: true })).toHaveValue('BlackMambas')
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click()
   await expect(page.getByRole('button', { name: /Add team/ })).toHaveCount(0)
   await expect(page.getByRole('button', { name: /Add player/ })).toBeVisible()
   for (const name of names) await expect(page.locator('.setup-team').filter({ hasText: name }).locator('img')).toBeVisible()
@@ -244,11 +247,12 @@ test('spectators can open a read-only team page with live squad details', async 
   await expect(page.locator('.team-detail-stats')).toContainText('940 points')
   await expect(page.locator('.team-detail-stats')).toContainText('60 / 1,000')
   await expect(page.locator('.squad-player').filter({ hasText: 'Signed Keeper' })).toContainText('60 points')
-  await expect(page.locator('.open-slot')).toHaveCount(2)
+  await expect(page.locator('.open-slot')).toHaveCount(0)
+  await expect(page.getByRole('dialog', { name: 'Team squad details' })).toBeVisible()
   await expect(page.locator('.position-counts')).toContainText('1 GK')
-  await page.getByRole('button', { name: 'Club 3' }).click()
+  await page.getByRole('dialog').getByRole('button', { name: 'Club 3', exact: true }).click()
   await expect(page).toHaveURL(/\?team=3$/)
-  await expect(page.getByText(/No signings yet/)).toBeVisible()
+  await expect(page.getByRole('dialog').getByText(/No signings yet/)).toBeVisible()
   await page.keyboard.press('Escape')
   await expect(page).toHaveURL(/\/$/)
   await expect(page.getByRole('button', { name: 'View Club 3 squad and details' })).toBeFocused()

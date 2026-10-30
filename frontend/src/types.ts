@@ -11,6 +11,7 @@ export type Player = {
   price: number | null
   captain: boolean
   bids: Bid[] // Final sold round only, in order. Empty for captains/unsold.
+  manual_assignment?: boolean
 }
 export type Team = {
   id: number
@@ -18,7 +19,7 @@ export type Team = {
   logo_path: string
   budget: number // Remaining points, not the initial allocation.
   spent: number
-  remaining_slots: number
+  remaining_slots: number | null
   max_bid: number
   roster: Array<Pick<Player, 'id' | 'name' | 'photo_path' | 'position'> & { price: number; captain: boolean }>
 }
@@ -27,6 +28,7 @@ export type AuctionState = {
   fixed_teams?: boolean
   status: 'setup' | 'running' | 'paused' | 'completed'
   squad_size: number
+  squad_limit?: null
   open_set: SetName | null
   teams: Team[]
   players: Player[]
@@ -46,6 +48,7 @@ export type Action =
   | 'configure' | 'start' | 'select' | 'random' | 'bid' | 'sold' | 'unsold'
   | 'pause' | 'resume' | 'undo' | 'reauction'
   | 'captain' | 'remove_captain' | 'open_set' | 'close_set'
+  | 'assign' | 'complete'
 export type ActionFields = {
   player_id?: number; team_id?: number; squad_size?: number; price?: number; set_name?: SetName
 }

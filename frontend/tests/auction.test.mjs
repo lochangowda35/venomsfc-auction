@@ -22,13 +22,14 @@ const state = (overrides = {}) => ({
 test('only eligible teams can bid exactly the next 10-credit increment', () => {
   assert.equal(bidBlockReason(state(), team(1)), null)
   assert.equal(bidBlockReason(state({ current: { player_id: 1, team_id: 1, bid: 10 } }), team(1)), 'Leading bid')
-  assert.equal(bidBlockReason(state(), { ...team(1), remaining_slots: 0 }), 'Squad full')
+  assert.equal(bidBlockReason(state(), { ...team(1), remaining_slots: 0 }), null)
+  assert.equal(bidBlockReason(state(), { ...team(1), remaining_slots: null, roster: Array(20).fill({}) }), null)
   assert.equal(bidBlockReason(state({ current: null }), team(1)), 'Choose a player first')
   assert.equal(bidBlockReason(state({ status: 'paused' }), team(1)), 'Auction is not live')
   assert.equal(bidBlockReason(state({ status: 'completed' }), team(1)), 'Auction is not live')
   assert.equal(bidBlockReason(state({ current: { player_id: 1, team_id: 2, bid: 90 } }), team(1)), null)
-  assert.equal(bidBlockReason(state({ current: { player_id: 1, team_id: 2, bid: 100 } }), team(1)), 'Reserve / budget limit')
-  assert.equal(bidBlockReason(state(), { ...team(1), max_bid: 0 }), 'Reserve / budget limit')
+  assert.equal(bidBlockReason(state({ current: { player_id: 1, team_id: 2, bid: 100 } }), team(1)), 'Budget limit')
+  assert.equal(bidBlockReason(state(), { ...team(1), max_bid: 0 }), 'Budget limit')
 })
 
 const captained = (overrides = {}) => {
@@ -37,13 +38,11 @@ const captained = (overrides = {}) => {
   return value
 }
 
-test('setup enforces exactly five teams, configured pool size, captains and local media', () => {
+test('setup enforces five teams, captains and local media without a squad-size requirement', () => {
   assert.deepEqual(setupProblems(captained({ status: 'setup' })), [])
   assert.match(setupProblems(state({ status: 'setup' })).join(' '), /captain and captain price for every team \(0\/5 done\)/)
   assert.match(setupProblems(state({ teams: [] })).join(' '), /exactly five teams/)
-  assert.match(setupProblems(state({ squad_size: 2 })).join(' '), /5 more players/)
-  assert.match(setupProblems(state({ squad_size: 0 })).join(' '), /between 1 and 100/)
-  assert.match(setupProblems(state({ squad_size: 101 })).join(' '), /between 1 and 100/)
+  assert.deepEqual(setupProblems(captained({ squad_size: 100 })), [])
   assert.match(setupProblems(state({ teams: [{ ...team(1), logo_path: 'https://example.test/a.png' }] })).join(' '), /Re-upload team logos/)
   assert.match(setupProblems(state({ players: [{ ...player(1), photo_path: '' }] })).join(' '), /Re-upload player photos/)
   assert.ok(mediaPath.test('/api/media/3a09d-1234.webp'))
@@ -75,7 +74,8 @@ test('wide official logos use square display crops without changing stored profi
 
 test('display banners resolve public names and amounts', () => {
   assert.equal(eventDescription(state({ last_event: { action: 'profile' } })),
-    'Auction setup updated. Matchday is getting closer.')
+    'Team or player profile updated.')
+  assert.equal(eventDescription(state({ last_event: { action: 'complete' } })), 'Auction completed by the host. Results are saved.')
   assert.equal(eventDescription(state({ last_event: { action: 'bid', team_id: 1, amount: 30 } })), 'Team 1 bids 30 points')
   assert.equal(eventDescription(state({ last_event: { action: 'sold', team_id: 2, player_id: 3, amount: 50 } })), 'Player 3 → Team 2 · 50 points')
   assert.match(eventDescription(state({ last_event: { action: 'pause' } })), /paused/)
