@@ -28,6 +28,76 @@ class HealthEndpointTests(unittest.TestCase):
     def test_unknown_endpoint_returns_not_found(self):
         self.assertEqual(self.client.get("/api/missing").status_code, 404)
 
+    def test_readiness_without_configuration_fails_explicitly(self):
+        with self.assertLogs(self.app.logger, level="ERROR"):
+            response = self.client.get("/api/ready")
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+        self.assertEqual(
+            response.json, {"error": "Database and host login must be configured."}
+        )
+
+    def test_readiness_checks_a_database_without_creating_records(self):
+        app = create_app({
+            "TESTING": True,
+            "SECRET_KEY": "test-only-key",
+            "HOST_PASSWORD_HASH": "test-only-hash",
+            "SQLALCHEMY_DATABASE_URI": "sqlite://",
+            "SQLALCHEMY_ENGINE_OPTIONS": {},
+        })
+        with app.app_context():
+            response = app.test_client().get("/api/ready")
+            with db.engine.connect() as connection:
+                tables = connection.exec_driver_sql(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                ).all()
+            db.engine.dispose()
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json, {"status": "ready"})
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+        self.assertEqual(tables, [])
+
+    def test_readiness_requires_host_login_even_when_database_is_available(self):
+        app = create_app({
+            "TESTING": True,
+            "SECRET_KEY": "test-only-key",
+            "HOST_PASSWORD_HASH": None,
+            "SQLALCHEMY_DATABASE_URI": "sqlite://",
+            "SQLALCHEMY_ENGINE_OPTIONS": {},
+        })
+        with app.app_context():
+            with self.assertLogs(app.logger, level="ERROR"):
+                response = app.test_client().get("/api/ready")
+            db.engine.dispose()
+
+        self.assertEqual(response.status_code, 503)
+
+    def test_readiness_surfaces_database_failure_without_private_details(self):
+        app = create_app({
+            "TESTING": True,
+            "SECRET_KEY": "test-only-key",
+            "HOST_PASSWORD_HASH": "test-only-hash",
+            "SQLALCHEMY_DATABASE_URI": "sqlite://",
+            "SQLALCHEMY_ENGINE_OPTIONS": {},
+        })
+        with app.app_context():
+            with patch.object(
+                db.engine,
+                "connect",
+                side_effect=OperationalError("private query", {}, Exception("secret")),
+            ):
+                with self.assertLogs(app.logger, level="ERROR"):
+                    response = app.test_client().get("/api/ready")
+            db.engine.dispose()
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json, {"error": "Database operation failed. Please retry later."})
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+        self.assertNotIn("secret", response.get_data(as_text=True))
+        self.assertNotIn("private query", response.get_data(as_text=True))
+
     def test_db_check_without_configuration_fails_explicitly(self):
         result = self.app.test_cli_runner().invoke(args=["db-check"])
 

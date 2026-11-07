@@ -5,9 +5,44 @@ from unittest.mock import patch
 from werkzeug.security import generate_password_hash
 
 from app import create_app
-from auth import host_required, limiter
+from auth import client_address, host_required, limiter
 from extensions import db
 from models import HostSession
+
+
+class ClientAddressTests(unittest.TestCase):
+    def setUp(self):
+        with patch.dict("os.environ", {"TRUST_PROXY": "0"}):
+            self.app = create_app({
+                "TESTING": True,
+                "SQLALCHEMY_DATABASE_URI": None,
+                "TRUST_CLOUDFLARE": True,
+            })
+
+    def test_tunnel_header_is_trusted_from_loopback(self):
+        with self.app.test_request_context(
+            headers={"CF-Connecting-IP": "203.0.113.5"},
+            environ_base={"REMOTE_ADDR": "127.0.0.1"},
+        ):
+            self.assertEqual(client_address(), "203.0.113.5")
+
+    def test_tunnel_header_is_ignored_from_a_non_loopback_peer(self):
+        with self.app.test_request_context(
+            headers={"CF-Connecting-IP": "203.0.113.5"},
+            environ_base={"REMOTE_ADDR": "172.18.0.2"},
+        ):
+            self.assertEqual(client_address(), "172.18.0.2")
+
+    def test_forwarded_headers_are_ignored_without_tunnel_trust(self):
+        self.app.config["TRUST_CLOUDFLARE"] = False
+        with self.app.test_request_context(
+            headers={
+                "CF-Connecting-IP": "203.0.113.5",
+                "X-Forwarded-For": "198.51.100.7",
+            },
+            environ_base={"REMOTE_ADDR": "127.0.0.1"},
+        ):
+            self.assertEqual(client_address(), "127.0.0.1")
 
 
 class HostAuthTests(unittest.TestCase):

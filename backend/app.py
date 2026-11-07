@@ -31,7 +31,9 @@ def create_app(test_config=None):
         SESSION_COOKIE_SECURE=os.environ.get("SESSION_COOKIE_SECURE") == "1",
         PERMANENT_SESSION_LIFETIME=timedelta(hours=8),
         SESSION_REFRESH_EACH_REQUEST=False,
-        UPLOAD_FOLDER=str(Path(__file__).parent / "uploads"),
+        UPLOAD_FOLDER=os.environ.get("UPLOAD_FOLDER") or str(Path(__file__).parent / "uploads"),
+        BACKUP_FOLDER=os.environ.get("BACKUP_FOLDER"),
+        ALLOW_MEDIA_RESTORE=os.environ.get("ALLOW_MEDIA_RESTORE") == "1",
         MAX_CONTENT_LENGTH=6 * 1024 * 1024,
         OFFICIAL_TEAMS=True,
         TRUST_CLOUDFLARE=os.environ.get("TRUST_CLOUDFLARE") == "1",
@@ -54,6 +56,11 @@ def create_app(test_config=None):
     if test_config is not None:
         app.config.update(test_config)
 
+    if os.environ.get("TRUST_PROXY") == "1":
+        # Enable only behind exactly one trusted proxy, never on a public app port.
+        from werkzeug.middleware.proxy_fix import ProxyFix
+        app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1)
+
     if app.config.get("SQLALCHEMY_DATABASE_URI"):
         db.init_app(app)
         migrate.init_app(app, db, directory=str(Path(__file__).parent / "migrations"))
@@ -73,6 +80,23 @@ def create_app(test_config=None):
     @app.get("/api/health")
     def health():
         return jsonify(status="ok", message="Hello from the Venoms FC Flask backend!")
+
+    @app.get("/api/ready")
+    def ready():
+        if (
+            "sqlalchemy" not in app.extensions
+            or not app.secret_key
+            or not app.config["HOST_PASSWORD_HASH"]
+        ):
+            app.logger.error("Readiness check failed: database or host login is not configured.")
+            response = jsonify(error="Database and host login must be configured.")
+            response.status_code = 503
+        else:
+            with db.engine.connect() as connection:
+                connection.execute(text("SELECT 1")).scalar_one()
+            response = jsonify(status="ready")
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     @app.get("/")
     @app.get("/host")
