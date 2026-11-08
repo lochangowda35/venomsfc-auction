@@ -50,6 +50,21 @@ Keep the repository root directory selected, leave build/start command overrides
 empty for normal operation, and disable automatic PR environments.
 New services should use dashboard settings, not the deprecated `railway.json`.
 
+### Optional image recovery
+
+Keep `ALLOW_MEDIA_RESTORE=0` during the trial and normal operation.
+The host-authenticated, CSRF-protected `PUT /api/media-restore/<name>` endpoint
+is an opt-in recovery helper for restoring a missing image under its original
+filename. It accepts one multipart `file` field, validates JPEG/PNG/WebP data
+up to 5 MB and 16 million pixels, and preserves its exact bytes. It publishes
+the complete file without overwriting an existing filename; storage failures
+return 503. The upload filesystem must support hard links.
+
+Enable it only during an approved recovery, verify restored files against
+backup checksums, then disable it again. It is not a database restore endpoint
+or a substitute for retained database-and-image backups. Do not use it to upload
+real auction images to this disposable trial.
+
 ## Sample data and checks
 
 Only for the first deployment of this empty test database, temporarily override

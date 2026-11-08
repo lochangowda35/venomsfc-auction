@@ -4,6 +4,7 @@ from pathlib import Path
 import secrets
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from PIL import Image
 from sqlalchemy import select
@@ -236,6 +237,67 @@ class AuctionFlowTests(unittest.TestCase):
             "name": "Team", "logo_path": "../../private.env",
         }).status_code, 400)
         self.assertEqual(self.client.get("/api/media/private.env").status_code, 404)
+
+    def test_media_restore_is_opt_in_and_keeps_original_name(self):
+        name = "0123456789abcdef0123456789abcdef.jpg"
+        url = f"/api/media-restore/{name}"
+        jpeg = BytesIO()
+        Image.new("RGB", (20, 20), "red").save(jpeg, format="JPEG")
+        upload = lambda: {"file": (BytesIO(jpeg.getvalue()), "x.jpg")}
+        self.assertEqual(self.client.put(url, headers=self.headers, data=upload()).status_code, 404)
+        self.app.config["ALLOW_MEDIA_RESTORE"] = True
+        self.assertEqual(self.app.test_client().put(url, data=upload()).status_code, 401)
+        self.assertEqual(self.client.put(url, data=upload()).status_code, 403)
+        self.assertEqual(self.client.put("/api/media-restore/bad.jpg", headers=self.headers,
+            data=upload()).status_code, 400)
+        self.assertEqual(self.client.put(url, headers=self.headers,
+            data={"file": (BytesIO(b"not an image"), "x.jpg")}).status_code, 400)
+        self.assertEqual(self.client.put(url, headers=self.headers, data=upload()).status_code, 201)
+        self.assertEqual((Path(self.folder.name) / name).read_bytes(), jpeg.getvalue())
+        self.assertEqual(self.client.put(url, headers=self.headers, data=upload()).status_code, 200)
+        with self.client.get(f"/api/media/{name}") as response:
+            self.assertEqual(response.status_code, 200)
+
+    def test_media_restore_preserves_existing_file_and_cleans_temporary_files(self):
+        self.app.config["ALLOW_MEDIA_RESTORE"] = True
+        name = "0123456789abcdef0123456789abcdef.jpg"
+        target = Path(self.folder.name) / name
+        target.write_bytes(b"original image bytes")
+        before = set(Path(self.folder.name).iterdir())
+        response = self.client.put(f"/api/media-restore/{name}", headers=self.headers,
+            data={"file": (image_bytes(), "replacement.png")})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json["existed"])
+        self.assertEqual(target.read_bytes(), b"original image bytes")
+        self.assertEqual(set(Path(self.folder.name).iterdir()), before)
+
+    def test_media_restore_reports_storage_failure_without_publishing_partial_file(self):
+        self.app.config["ALLOW_MEDIA_RESTORE"] = True
+        name = "0123456789abcdef0123456789abcdef.jpg"
+        before = set(Path(self.folder.name).iterdir())
+        for operation, error in (
+            ("media.os.link", OSError("disk failure")),
+            ("media.Path.mkdir", FileExistsError("folder path is a file")),
+        ):
+            with self.subTest(operation=operation):
+                with patch(operation, side_effect=error):
+                    with self.assertLogs(self.app.logger, level="ERROR"):
+                        response = self.client.put(
+                            f"/api/media-restore/{name}", headers=self.headers,
+                            data={"file": (image_bytes(), "restored.png")})
+                self.assertEqual(response.status_code, 503)
+                self.assertFalse((Path(self.folder.name) / name).exists())
+                self.assertEqual(set(Path(self.folder.name).iterdir()), before)
+
+    def test_media_restore_rejects_images_above_pixel_limit(self):
+        self.app.config["ALLOW_MEDIA_RESTORE"] = True
+        image = BytesIO()
+        Image.new("RGB", (4001, 4000)).save(image, format="PNG")
+        name = "0123456789abcdef0123456789abcdef.jpg"
+        response = self.client.put(f"/api/media-restore/{name}", headers=self.headers,
+            data={"file": (BytesIO(image.getvalue()), "large.png")})
+        self.assertEqual(response.status_code, 400)
+        self.assertFalse((Path(self.folder.name) / name).exists())
 
     def test_opt_in_sample_seed_refuses_existing_records(self):
         result = self.app.test_cli_runner().invoke(args=["seed-demo", "--yes"])
