@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { availablePlayers, bidBlockReason, eventDescription, mediaPath, portraitPath, resultsCsv, setupProblems } from '../src/auction.ts'
+import { availablePlayers, bidBlockReason, captainsFirst, eventDescription, mediaPath, portraitPath, resultsCsv, setupProblems } from '../src/auction.ts'
 import { ApiError, request } from '../src/api.ts'
 
 const player = (id, status = 'available') => ({
@@ -17,6 +17,29 @@ const state = (overrides = {}) => ({
   players: Array.from({ length: 5 }, (_, index) => player(index + 1)),
   current: { player_id: 1, team_id: null, bid: 0 }, last_event: null, can_undo: false,
   ...overrides,
+})
+
+test('Squad watch puts captains first without mutating rosters or changing relative order', () => {
+  const roster = Object.freeze([
+    Object.freeze({ ...player(1), captain: false }),
+    Object.freeze({ ...player(2), captain: true }),
+    Object.freeze({ ...player(3), captain: false }),
+    Object.freeze({ ...player(4), captain: true }),
+    Object.freeze({ ...player(5), captain: false }),
+  ])
+  const ordered = captainsFirst(roster)
+  assert.deepEqual(ordered.map((p) => p.id), [2, 4, 1, 3, 5])
+  assert.deepEqual(roster.map((p) => p.id), [1, 2, 3, 4, 5])
+  assert.equal(ordered[0], roster[1])
+  assert.equal(ordered[2], roster[0])
+})
+
+test('Squad watch safely preserves empty, captain-free and already ordered rosters', () => {
+  assert.deepEqual(captainsFirst([]), [])
+  const withoutCaptain = Object.freeze([player(3), player(1), player(2)])
+  assert.deepEqual(captainsFirst(withoutCaptain), withoutCaptain)
+  const captainFirst = Object.freeze([{ ...player(2), captain: true }, player(1), player(3)])
+  assert.deepEqual(captainsFirst(captainFirst), captainFirst)
 })
 
 test('only eligible teams can bid exactly the next 10-credit increment', () => {

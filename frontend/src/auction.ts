@@ -7,6 +7,10 @@ export const setLabels: Record<SetName, string> = {
 }
 export const captainLimit = () => 1000
 
+export function captainsFirst(roster: Readonly<Team['roster']>): Team['roster'] {
+  return [...roster.filter((player) => player.captain), ...roster.filter((player) => !player.captain)]
+}
+
 /** Every player shown in a set grid: waiting, current and already sold. Captains are not auctioned. */
 export function setMembers(state: AuctionState, set: SetName): Player[] {
   const fromUnsold = (p: Player) => p.status === 'unsold' || (p.status === 'current' && state.open_set === 'UNSOLD')

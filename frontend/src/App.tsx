@@ -13,6 +13,7 @@ import { useAuction } from './useAuction'
 import { AuctionBanner, TvGuide } from './Branding'
 import { unlockSound } from './sound'
 import { usePreloadImages } from './usePreload'
+import venomsLogo from './assets/venoms-fc.png'
 import './App.css'
 
 function teamFromUrl(): number | null {
@@ -157,9 +158,16 @@ function App() {
     try { localStorage.setItem('venoms-theme', next ? 'light' : 'dark') } catch { /* Theme remains usable without storage. */ }
   }
 
+  const completedSpectator = !privateView && authorized && state?.status === 'completed'
+  const liveStrip = <div className="live-strip">
+    <span className={`connection ${connected ? 'online' : 'offline'}`}><i aria-hidden="true" />{connected ? 'Live sync · 1s' : state ? 'Reconnecting…' : 'Connecting…'}</span>
+    <div className="live-strip-right">{!host && <span className="readonly-label">READ ONLY {tv ? '/ TV' : '/ SPECTATOR'}</span>}
+      {state && <span className={`status-label ${state.status}`}>{state.status}</span>}</div>
+  </div>
+
   return <div className={`app ${tv ? 'tv-view' : ''} ${host ? 'host-view' : 'spectator-view'} ${light ? 'light-theme' : ''}`}>
     <header className="site-header">
-      <a className="brand" href="/" aria-label="Venoms FC spectator home"><img className="official-crest" src="/api/branding/venoms-fc.jpg" alt="Official Venoms FC logo" /><span>VENOMS <b>FC</b><small><span>INTERNAL CUP ·</span> <span>THIRD EDITION</span></small></span></a>
+      <a className="brand" href="/" aria-label="Venoms FC spectator home"><img className="official-crest" src={venomsLogo} alt="Official Venoms FC logo" /><span>VENOMS <b>FC</b><small><span>INTERNAL CUP ·</span> <span>THIRD EDITION</span></small></span></a>
       <div className="header-actions">
         <button className="theme-toggle" onClick={toggleTheme} aria-label={`Switch to ${light ? 'dark' : 'light'} theme`} title={`Switch to ${light ? 'dark' : 'light'} theme`}>{light ? '◐' : '◑'}</button>
         <details className="view-switch" ref={viewMenu}>
@@ -180,13 +188,13 @@ function App() {
       </div>
     </header>
     <main className="page-shell">
+      {completedSpectator && <div className="edition-complete-banner" role="status">
+        <span className="edition-complete-icon" aria-hidden="true">🏆</span>
+        <p><strong>Edition 3 auction is complete!</strong> <span>Thanks for following along. Every squad is locked in, so explore the final rosters below.</span></p>
+      </div>}
       {!tv && (host || teamId === null) && <AuctionBanner />}
       {authorized && <>
-      <div className="live-strip">
-        <span className={`connection ${connected ? 'online' : 'offline'}`}><i aria-hidden="true" />{connected ? 'Live sync · 1s' : state ? 'Reconnecting…' : 'Connecting…'}</span>
-        <div className="live-strip-right">{!host && <span className="readonly-label">READ ONLY {tv ? '/ TV' : '/ SPECTATOR'}</span>}
-          {state && <span className={`status-label ${state.status}`}>{state.status}</span>}</div>
-      </div>
+      {!completedSpectator && liveStrip}
       {!connected && <div className="connection-warning" role="alert">
         <strong>{state ? 'Connection interrupted. Showing the last known state.' : 'Connecting to your local auction server…'}</strong>
         <p>{auction.connectionError || 'Waiting for the first update.'} All host changes are disabled until live sync returns. Retrying automatically.</p>
@@ -214,7 +222,7 @@ function App() {
               title: 'Ready to start the auction?', body: 'Five teams have 1000 points each, including captain prices. Squads have no size limit. Names, photos and results can still be corrected after starting.',
               confirm: 'Start auction', perform: () => { void auction.action('start', {}, state.version) },
             })} />
-          : !tv && <Stage state={state} />}
+          : !tv && !completedSpectator && <Stage state={state} />}
         {host && session?.authenticated && state.status !== 'setup' && <HostControls state={state} disabled={!canMutate} action={auction.action}
           complete={() => setConfirmation({
             title: 'Complete this auction?',
@@ -249,6 +257,7 @@ function App() {
           </details>
         </>}
         {!privateView && <TeamBoard state={state} onOpen={openTeam} />}
+        {completedSpectator && <>{liveStrip}<Stage state={state} /></>}
         {!(host && session?.authenticated && state.status === 'setup') && !tv && <SetsBoard state={state} onPlayer={setPlayerId} />}
         {tv ? <div className="tv-layout">
           <div className="tv-main">

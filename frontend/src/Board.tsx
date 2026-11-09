@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { credits, eventDescription, positions, resultsCsv } from './auction'
+import { captainsFirst, credits, eventDescription, positions, resultsCsv } from './auction'
 import { Portrait } from './components'
 import type { AuctionState } from './types'
 
@@ -51,11 +51,11 @@ export function TeamBoard({ state, onOpen, compact = false }: { state: AuctionSt
       <div className="squad-meter" aria-label={`${team.spent} of 1000 points spent`}><span style={{ width: `${Math.min(100, team.spent / 10)}%` }} /></div>
       {compact ? <ul className="roster-chips" aria-label={`${team.name} squad`}>
         {!team.roster.length && <li className="muted empty-chip">No signings yet</li>}
-        {team.roster.map((player) => <li key={player.id}>{player.captain && <CaptainBadge />}<span>{player.name}</span><b>{credits(player.price)}</b></li>)}
+        {captainsFirst(team.roster).map((player) => <li key={player.id}>{player.captain && <CaptainBadge />}<span>{player.name}</span><b>{credits(player.price)}</b></li>)}
       </ul> : <>
       <div className="roster-list">
         {!team.roster.length && <p className="empty compact">The first signing is still to come.</p>}
-        {team.roster.map((player) => <div key={player.id} className="roster-player">
+        {captainsFirst(team.roster).map((player) => <div key={player.id} className="roster-player">
           <Portrait path={player.photo_path} name={player.name} className="mini-photo" />
           <div><strong>{player.name}{player.captain && <CaptainBadge />}</strong><small className="muted">{player.position}{player.captain ? ' · Captain' : ''}</small></div><b>{credits(player.price)} <small>points</small></b>
         </div>)}

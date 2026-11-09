@@ -48,7 +48,7 @@
   --warning: #815000; --danger: #b22e26;
 }
 .light-theme::before { opacity: .2; }
-.official-crest { width: 56px; height: 56px; box-shadow: 0 0 0 1px rgba(255,255,255,.08), 0 6px 18px rgba(0,0,0,.35); object-fit: contain; border-radius: 12px; border: 1px solid var(--border); background: #020307; }
+.official-crest { width: 72px; height: 72px; object-fit: contain; image-rendering: auto; filter: drop-shadow(0 4px 12px rgba(0,0,0,.45)); }
 .brand > span { font-family: var(--brush-font); font-size: 24px; font-weight: 400; letter-spacing: .01em; text-shadow: 1px 2px 0 var(--title-shadow); }
 .brand small { font-family: Montserrat, "Segoe UI", Arial, sans-serif; font-size: 10px; font-weight: 700; color: var(--text); opacity: .82; text-shadow: none; }
 .auction-hero { display: grid; grid-template-columns: .9fr 1.2fr; align-items: center; gap: clamp(28px, 5vw, 80px); padding: 38px 0 28px; }
@@ -68,7 +68,7 @@
 .auction-hero.compact .official-banner { width: fit-content; margin: auto; }
 .auction-hero.compact img { max-height: 120px; width: auto; max-width: 100%; }
 .auction-hero.compact .banner-caption { display: none; }
-.login-crest { width: 96px; height: 96px; object-fit: contain; margin-bottom: 22px; border-radius: 12px; border: 1px solid var(--border); }
+.login-crest { width: 128px; height: 128px; object-fit: contain; margin-bottom: 22px; filter: drop-shadow(0 6px 16px rgba(0,0,0,.45)); }
 .back-to-spectator { display: inline-block; margin-top: 24px; font-size: 13px; color: var(--accent); }
 .tv-guide { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 14px 30px; margin-top: 12px; }
 .tv-guide h2 { margin-top: 7px; font-size: 30px; }
@@ -144,6 +144,11 @@ p { line-height: 1.6; }
 .count { color: var(--muted); font-size: 15px; font-weight: 500; margin-left: 8px; white-space: nowrap; }
 .section-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; margin-bottom: 24px; }
 .section-heading > .muted { font-size: 12px; }
+.edition-complete-banner { display: flex; align-items: center; gap: 12px; margin: clamp(20px, 2vw, 28px) 0; padding: 10px 16px; border: 1px solid rgba(255, 207, 92, .45); border-left: 3px solid var(--gold); border-radius: 10px; background: linear-gradient(90deg, rgba(255, 196, 61, .16), rgba(121, 220, 255, .06)); font-size: 14px; }
+.edition-complete-banner + .auction-hero { padding-top: 0; }
+.edition-complete-banner p { margin: 0; }
+.edition-complete-banner strong { color: var(--gold); margin-right: 6px; }
+.edition-complete-icon { font-size: 20px; line-height: 1; }
 .event-banner { background: var(--panel-soft); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 10px; display: flex; align-items: center; gap: 20px; padding: 15px 22px; margin-bottom: 16px; }
 .event-banner .eyebrow { white-space: nowrap; font-size: 13px; }
 .event-banner strong { font-size: 16px; }
@@ -199,12 +204,18 @@ p { line-height: 1.6; }
 .squad-meter { margin: 16px 0; background: var(--panel-soft); height: 3px; border-radius: 5px; }
 .squad-meter span { background: var(--accent); height: 100%; display: block; border-radius: 5px; transition: width .3s; }
 .roster-list { flex: 1; }
-.roster-player { display: flex; gap: 10px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--border); font-size: 12px; }
-.roster-player > div:not(.portrait) { min-width: 0; }
+.roster-player { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 4px 14px; align-items: end; padding: 14px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+.roster-player > div:not(.portrait) { min-width: 0; overflow-wrap: anywhere; }
 .roster-player small { display: block; margin-top: 3px; font-size: 9px; }
-.roster-player b { margin-left: auto; flex-shrink: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.roster-player b { grid-column: 2; align-self: start; font-variant-numeric: tabular-nums; }
 .roster-player b small { display: inline; color: var(--muted); font-weight: 500; }
-.mini-photo { width: 32px; height: 38px; border-radius: 4px; }
+.roster-player .mini-photo { grid-row: span 2; width: 72px; height: 108px; border-radius: 8px; border: 1px solid var(--border); align-self: center; }
+.roster-player .mini-photo img { object-fit: contain; }
+.rosters-section:not(.squad-compact) .team-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 20px; }
+@media (max-width: 480px) {
+  .roster-player { grid-template-columns: 64px minmax(0, 1fr); gap: 4px 12px; }
+  .roster-player .mini-photo { width: 64px; height: 96px; }
+}
 .team-footer { margin-top: 20px; display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; color: var(--muted); font-size: 10px; line-height: 1.6; }
 .empty { text-align: center; padding: 35px 22px; color: var(--muted); line-height: 1.7; font-size: 14px; margin-bottom: 0; }
 .empty.compact { padding: 8px 0 14px; font-size: 12px; }
@@ -334,7 +345,7 @@ dialog::backdrop { background: #020b07cc; backdrop-filter: blur(5px); }
 }
 @media (max-width: 720px) {
   .app::before { background-size: 520px auto; background-position: right -220px top 110px; opacity: .4; }
-  .official-crest { width: 48px; height: 48px; border-radius: 11px; }
+  .official-crest { width: 58px; height: 58px; }
   .brand { gap: 8px; min-width: 0; flex-shrink: 1; }
   .brand > span { font-size: 18px; white-space: nowrap; }
   .brand small { font-size: 9px; letter-spacing: .08em; line-height: 1.25; margin-top: 4px; white-space: nowrap; } .brand small > span { display: block; }
@@ -421,7 +432,7 @@ dialog::backdrop { background: #020b07cc; backdrop-filter: blur(5px); }
   .dialog-content { padding: 24px; }
 }
 @media (max-width: 380px) {
-  .official-crest { width: 44px; height: 44px; }
+  .official-crest { width: 52px; height: 52px; }
   .brand > span { font-size: 17px; }
   .brand small { font-size: 8.5px; letter-spacing: .06em; }
 }

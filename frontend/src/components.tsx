@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { mediaPath, portraitPath } from './auction'
+import venomsLogo from './assets/venoms-fc.png'
 
 export function Portrait({ path, name, className = '' }: { path: string; name: string; className?: string }) {
   const [failed, setFailed] = useState(false)
@@ -93,7 +94,7 @@ export function Login({ disabled, onSubmit, tv = false }: {
     setPassword('')
   }
   return <section className="panel login-panel" aria-labelledby="login-title">
-    <img className="login-crest" src="/api/branding/venoms-fc.jpg" alt="Official Venoms FC crest" />
+    <img className="login-crest" src={venomsLogo} alt="Official Venoms FC crest" />
     <span className="eyebrow">Host access</span>
     <h1 id="login-title">{tv ? 'The big screen. Host access only.' : 'Your auction. Your control.'}</h1>
     <p className="muted">Sign in with the host password to access the host desk and private TV display. Visitors can watch the public spectator view without signing in.</p>
