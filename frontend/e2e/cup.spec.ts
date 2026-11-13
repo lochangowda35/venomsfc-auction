@@ -314,7 +314,7 @@ test('penalty result cards name the winner without host-ended labels and preserv
   }
 })
 
-test('phone and unfolded headers keep every navigation label visible on one line without scrolling', async ({ page }, testInfo) => {
+test('phone branding and squads headings stay balanced while phone and unfolded navigation fits without scrolling', async ({ page }, testInfo) => {
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await page.route('**/api/cup**', (route) => {
     const path = new URL(route.request().url()).pathname
@@ -323,10 +323,14 @@ test('phone and unfolded headers keep every navigation label visible on one line
   })
   await page.setViewportSize({ width: 360, height: 900 })
   await page.goto('/')
+  const squadsTitle = page.locator('.cup-card').filter({
+    has: page.getByRole('heading', { name: 'Squads', exact: true }),
+  }).locator('.cup-section-title')
+  await expect(squadsTitle).toBeVisible()
   await page.evaluate(() => document.fonts.ready)
   const nav = page.getByRole('navigation', { name: 'Main navigation' })
   await expect(nav.getByRole('link')).toHaveCount(5)
-  for (const width of [360, 390, 412, 600, 720, 768, 840, 900, 1440]) {
+  for (const width of [360, 390, 412, 430, 600, 720, 768, 840, 900, 1440]) {
     await page.setViewportSize({ width, height: 900 })
     const layout = await nav.evaluate((element) => {
       const bounds = element.getBoundingClientRect()
@@ -357,7 +361,40 @@ test('phone and unfolded headers keep every navigation label visible on one line
       expect(link.textHeight, `${link.label} wraps at ${width}px`).toBeLessThanOrEqual(link.fontSize * 1.7)
       expect(link.height).toBeGreaterThanOrEqual(width <= 760 ? 44 : 42)
     }
+    const composition = await squadsTitle.evaluate((element) => {
+      const title = element.firstElementChild!.getBoundingClientRect()
+      const copy = element.querySelector('.cup-section-detail')!
+      const copyBounds = copy.getBoundingClientRect()
+      const brand = document.querySelector('.cup-brand')!.getBoundingClientRect()
+      const nav = document.querySelector('.cup-header nav')!.getBoundingClientRect()
+      return {
+        brandLeft: brand.left, brandCenter: brand.left + brand.width / 2,
+        brandMiddle: brand.top + brand.height / 2, navMiddle: nav.top + nav.height / 2,
+        width: element.clientWidth, titleWidth: title.width,
+        titleBottom: title.bottom, titleLeft: title.left,
+        copyLeft: copyBounds.left, copyTop: copyBounds.top, copyAlign: getComputedStyle(copy).textAlign,
+        labels: Array.from(element.querySelectorAll('.cup-eyebrow, h2')).map((label) => {
+          const text = document.createRange()
+          text.selectNodeContents(label)
+          return { height: text.getBoundingClientRect().height, fontSize: parseFloat(getComputedStyle(label).fontSize) }
+        }),
+      }
+    })
+    if (width <= 560) {
+      expect(Math.abs(composition.brandCenter - width / 2), `Brand is not centered at ${width}px`).toBeLessThan(1)
+      expect(composition.titleWidth).toBeGreaterThanOrEqual(composition.width - 1)
+      expect(composition.copyTop).toBeGreaterThanOrEqual(composition.titleBottom)
+      expect(Math.abs(composition.copyLeft - composition.titleLeft)).toBeLessThan(1)
+      expect(composition.copyAlign).toBe('left')
+      for (const label of composition.labels) expect(label.height).toBeLessThanOrEqual(label.fontSize * 1.7)
+    } else if (width >= 768) {
+      expect(composition.brandLeft).toBe(32)
+      expect(Math.abs(composition.brandMiddle - composition.navMiddle)).toBeLessThan(1)
+      expect(composition.copyLeft).toBeGreaterThan(composition.titleLeft)
+      expect(composition.copyAlign).toBe('right')
+    }
     await page.locator('.cup-header').screenshot({ path: testInfo.outputPath(`header-${width}.png`) })
+    await squadsTitle.screenshot({ path: testInfo.outputPath(`squads-title-${width}.png`) })
   }
 })
 

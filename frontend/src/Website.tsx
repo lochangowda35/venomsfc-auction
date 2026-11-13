@@ -433,7 +433,7 @@ function captainFirst(team: Team) {
 }
 
 function Squads({ teams }: { teams: Team[] }) {
-  return <section className="cup-card">
+  return <section className="cup-card cup-squads">
     <SectionTitle eyebrow="All teams" title="Squads" detail="Captain tags reflect the recorded auction captain while they remain in that squad." />
     {teams.length ? <div className="cup-roster-board">{teams.map((team) => <article className="cup-roster-team" key={team.id}>
       <a className="cup-roster-head" href={`/teams/${team.id}`}>

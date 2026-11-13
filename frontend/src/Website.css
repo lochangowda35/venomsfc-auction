@@ -507,6 +507,11 @@
   .cup-host-card { padding: 14px; }
   .cup-history li { flex-wrap: wrap; }
 }
+@media (max-width: 560px) {
+  .cup-header > .cup-brand { align-self: center; }
+  .cup-squads > .cup-section-title { align-items: stretch; flex-direction: column; gap: 10px; }
+  .cup-squads > .cup-section-title > .cup-section-detail { text-align: left; }
+}
 @media (max-width: 420px) {
   .cup-header { padding-inline: 12px; }
   .cup-header nav { gap: 0; }
