@@ -1,5 +1,11 @@
 import { expect, test, type Page } from '@playwright/test'
 
+test.beforeEach(async ({ page }) => {
+  await page.route('**/api/cup-auth/session', (route) =>
+    route.fulfill({ json: { authenticated: false, csrf_token: 'synthetic-public-only' } }))
+  await page.route('**/api/branding/**', (route) => route.fulfill({ status: 404 }))
+})
+
 for (const unresolved of [null, 'An exact sporting tie requires a host decision.']) {
 test(`completed league ${unresolved ? 'awaits sporting tie resolution' : 'announces official playoff participants everywhere'}`, async ({ page }) => {
   const teams = ['Anacondas', 'BlackMambas', 'Cobras', 'Pythons', 'Vipers'].map((name, index) => ({
@@ -189,12 +195,12 @@ test('penalty champions, partial podium and shared goal and assist leaders appea
     const assists = leaders.getByRole('article', { name: 'Most assists', exact: true })
     await expect(goals).toContainText('5 goals')
     await expect(goals).toContainText('Shared lead · 2 players')
-    await expect(goals.getByRole('link')).toHaveCount(2)
+    await expect(goals.getByRole('link')).toHaveCount(3)
     await expect(goals.getByRole('link', { name: /Rhea Striker/ })).toHaveAttribute('href', '/players/1')
     await expect(goals.getByRole('link', { name: /Noah Finisher/ })).toHaveAttribute('href', '/players/2')
-    await expect(goals).not.toContainText('Arun Creator')
+    await expect(goals.getByRole('link', { name: /Arun Creator/ })).toContainText('2 goals')
     await expect(assists).toContainText('3 assists')
-    await expect(assists.getByRole('link')).toHaveCount(2)
+    await expect(assists.getByRole('link')).toHaveCount(3)
     await expect(assists).toContainText('Arun Creator')
     for (const width of [390, 430, 800, 1440]) {
       await page.setViewportSize({ width, height: 900 })
@@ -221,6 +227,40 @@ test('penalty champions, partial podium and shared goal and assist leaders appea
   final.shootout_winner_team_id = null
   final.shootout_finish = null
   await expect(page.getByRole('region', { name: 'Cup champions' })).toHaveCount(0, { timeout: 15_000 })
+})
+
+test('compact leaders follow full fixtures and the league table, cap three players and retain full Stats', async ({ page }) => {
+  const { cup } = await mockPlayoffResults(page)
+  const base = cup.leaderboards.goals[1]
+  cup.leaderboards.goals = ['Alpha', 'Beta', 'Gamma', 'Delta', 'Omega'].map((name, index) => ({
+    ...base, player: { ...player, id: index + 10, name }, total: index < 4 ? 7 : 1,
+  }))
+  cup.leaderboards.assists = cup.leaderboards.goals.map((row, index) => ({ ...row, total: 5 - index }))
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/')
+  const spotlight = page.getByRole('region', { name: 'Goal and assist leaders' })
+  await expect(page.locator('.cup-home-fixtures .cup-match-card')).toHaveCount(12)
+  const goals = spotlight.getByRole('article', { name: 'Most goals', exact: true })
+  await expect(goals.locator('li')).toHaveCount(3)
+  await expect(goals.locator('.cup-spotlight-name b')).toHaveText(['Alpha', 'Beta', 'Delta'])
+  await expect(goals.locator('.cup-spotlight-total')).toHaveText(['7 goals', '7 goals', '7 goals'])
+  await expect(goals).toContainText('Shared lead · 4 players')
+  await expect(spotlight.getByRole('article', { name: 'Most assists', exact: true }).locator('.cup-spotlight-total'))
+    .toHaveText(['5 assists', '4 assists', '3 assists'])
+  expect(await page.evaluate(() => Boolean(document.querySelector('.cup-home-fixtures')!
+    .compareDocumentPosition(document.querySelector('.cup-spotlight')!) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true)
+  await expect(page.locator('.cup-home-fixtures time').first()).toContainText(/AM|PM/)
+  for (const width of [390, 430, 1440]) {
+    await page.setViewportSize({ width, height: 844 })
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  }
+  await page.goto('/tournaments/1')
+  await expect(spotlight).toBeVisible()
+  expect(await page.evaluate(() => Boolean(document.querySelector('.cup-table')!
+    .compareDocumentPosition(document.querySelector('.cup-spotlight')!) & Node.DOCUMENT_POSITION_FOLLOWING))).toBe(true)
+  await page.goto('/tournaments/1?section=leaders')
+  await expect(page.locator('.cup-leaderboard').filter({ has: page.getByRole('heading', { name: 'Top scorers' }) }).locator('li')).toHaveCount(5)
+  await expect(page.locator('.cup-leaderboard').filter({ has: page.getByRole('heading', { name: 'Top assists' }) }).locator('li')).toHaveCount(5)
 })
 
 test('shootout takers with duplicate names retain distinct selectable identities', async ({ page }) => {
@@ -445,6 +485,31 @@ test('tournament navigation shows only the chosen section and restores it with b
   expect(await page.locator('.cup-site').evaluate((element) => element.scrollWidth <= window.innerWidth)).toBe(true)
 })
 
+test('homepage retains completed fixtures over newer drafts while prioritizing published and active cups', async ({ page }) => {
+  const completed = { ...structuredClone(tournament), matches: Array.from({ length: 12 }, (_, index) => ({
+    ...structuredClone(match), id: index + 21, match_order: index + 1,
+  })) }
+  const draft = { ...structuredClone(tournament), id: 9, name: 'Newer empty draft', lifecycle: 'draft', matches: [] }
+  const published = { ...structuredClone(tournament), id: 2, name: 'Published Cup', lifecycle: 'published' }
+  const active = { ...structuredClone(tournament), id: 3, name: 'Active Cup', lifecycle: 'running' }
+  let rows = [draft, completed]
+  await page.route('**/api/cup**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    const selected = rows.find((row) => row.id === Number(path.split('/').at(-1)))
+    return route.fulfill({ json: path === '/api/cup-auth/session' ? { authenticated: false }
+      : path === '/api/cup' ? { tournaments: rows } : { tournament: selected } })
+  })
+  for (const featured of [completed, published, active, { ...active, lifecycle: 'paused' }]) {
+    rows = featured.id === completed.id ? [draft, completed]
+      : featured.id === published.id ? [draft, completed, published] : [draft, completed, published, featured]
+    await page.goto('/')
+    await expect(page.locator('.cup-featured-banner')).toHaveAttribute('href', `/tournaments/${featured.id}`)
+    await expect(page.locator('.cup-featured-banner')).toContainText(featured.name)
+    await expect(page.locator('.cup-home-fixtures .cup-match-card')).toHaveCount(featured.matches.length)
+    await expect(page.getByRole('heading', { name: 'Fixtures & results', exact: true })).toBeVisible()
+  }
+})
+
 test('homepage follows the selected cup lifecycle and shows its squads directly', async ({ page }) => {
   test.setTimeout(180_000)
   await page.emulateMedia({ reducedMotion: 'reduce' })
@@ -453,7 +518,7 @@ test('homepage follows the selected cup lifecycle and shows its squads directly'
   const upcoming = { ...structuredClone(match), id: 23, state: 'scheduled', home_goals: 0, away_goals: 0 }
   const laterUpcoming = { ...structuredClone(upcoming), id: 24, scheduled_at: '2026-11-11T12:00:00+00:00' }
   let current = { ...structuredClone(tournament), lifecycle: 'draft', matches: [match, laterUpcoming, upcoming, live] }
-  const previous = { ...structuredClone(tournament), id: 2 }
+  const previous = { ...structuredClone(tournament), id: 2, lifecycle: 'draft' }
   await page.route('**/api/cup**', async (route) => {
     const path = new URL(route.request().url()).pathname
     const payload = path === '/api/cup' ? { tournaments: [current, previous] } : { tournament: current }
@@ -878,8 +943,11 @@ test('authenticated host desk edits cup roster and submits a reviewed fixture or
   await expect(page.getByRole('heading', { name: 'Manage cup rosters' })).toBeVisible()
   const firstPendingTime = new Date(matches[1].scheduled_at)
   firstPendingTime.setMinutes(firstPendingTime.getMinutes() - firstPendingTime.getTimezoneOffset())
+  const firstPendingHour = Number(firstPendingTime.toISOString().slice(11, 13))
   await page.getByRole('button', { name: 'Fixtures' }).click()
-  await expect(page.getByLabel('First kickoff')).toHaveValue(firstPendingTime.toISOString().slice(0, 16))
+  await expect(page.getByLabel('First kickoff date', { exact: true })).toHaveValue(firstPendingTime.toISOString().slice(0, 10))
+  await expect(page.getByLabel('First kickoff hour', { exact: true })).toHaveValue(String(firstPendingHour % 12 || 12))
+  await expect(page.getByLabel('First kickoff AM/PM', { exact: true })).toHaveValue(firstPendingHour >= 12 ? 'PM' : 'AM')
   await page.getByRole('button', { name: 'Squad & settings' }).click()
   await page.getByLabel('Half-time break (minutes)').fill('7')
   await page.getByRole('button', { name: 'Fixtures' }).click()
@@ -896,7 +964,7 @@ test('authenticated host desk edits cup roster and submits a reviewed fixture or
   await expect(page.getByRole('status').filter({ hasText: 'saved. It is recorded in host history' })).toBeVisible()
   matchday = true
   await page.getByRole('button', { name: 'Fixtures' }).click()
-  await expect(page.getByLabel('First pending kickoff')).toBeVisible({ timeout: 12_000 })
+  await expect(page.getByLabel('First pending kickoff date', { exact: true })).toBeVisible({ timeout: 12_000 })
   await page.getByRole('button', { name: 'Move match 6 up' }).click()
   await page.getByRole('button', { name: 'Squad & settings' }).click()
   await page.getByLabel('Cup roster player').selectOption(String(cupPlayers[0].id))
@@ -932,7 +1000,7 @@ function draftFixtureGenerationData() {
     ...team, id: index + 1, name: `Synthetic Team ${index + 1}`,
     players: players.filter((person) => person.id <= 26 && (person.id - 1) % 5 === index),
   }))
-  const matches: (typeof match)[] = []
+  const matches: (Omit<typeof match, 'clock'> & { clock: Partial<typeof match.clock> })[] = []
   const data = {
     ...tournament, lifecycle: 'draft', version: 1, teams, matches,
     settings: { players_per_side: 4, half_minutes: 10, break_minutes: 5,
@@ -941,6 +1009,235 @@ function draftFixtureGenerationData() {
   }
   return { data, players }
 }
+
+test('hosts publish complete fixtures before start and Tournament navigation opens the active cup', async ({ page }) => {
+  const { data, players } = draftFixtureGenerationData()
+  const posts: string[] = []
+  await page.route('**/api/cup**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/cup-auth/session') return route.fulfill({ json: { authenticated: true, csrf_token: 'synthetic-only' } })
+    if (route.request().method() === 'POST') {
+      posts.push(path)
+      data.version += 1
+      if (path.endsWith('/fixtures')) {
+        data.matches = Array.from({ length: 10 }, (_, index) => ({
+          ...match, id: index + 1, match_order: index + 1, state: 'draft', clock: {},
+          scheduled_at: new Date(Date.UTC(2026, 10, 14, 14, 30) + index * 25 * 60_000).toISOString(),
+        }))
+      } else if (path.endsWith('/publish')) {
+        data.lifecycle = 'published'
+        data.matches.forEach((fixture) => { fixture.state = 'scheduled' })
+      }
+      return route.fulfill({ json: { tournament_id: 1, version: data.version } })
+    }
+    return route.fulfill({ json: path === '/api/cup' ? { tournaments: [data] }
+      : path === '/api/cup/players' ? { players }
+        : path.endsWith('/history') ? { history: [] } : { tournament: data } })
+  })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/tournament-host')
+  await page.getByRole('button', { name: 'Fixtures', exact: true }).click()
+  await page.getByLabel('First kickoff hour', { exact: true }).selectOption('12')
+  await page.getByLabel('First kickoff minute', { exact: true }).selectOption('30')
+  await page.getByLabel('First kickoff AM/PM', { exact: true }).selectOption('AM')
+  await page.getByRole('button', { name: 'Generate fixtures', exact: true }).click()
+  await expect(page.locator('.cup-fixture-order-row')).toHaveCount(10)
+  await expect(page.getByRole('button', { name: 'Start tournament', exact: true })).toHaveCount(0)
+  await expect(page.getByText('Prepare, review and publish fixtures before matchday.', { exact: false })).toBeVisible()
+  page.once('dialog', async (dialog) => {
+    expect(dialog.message()).toContain('does not start the tournament')
+    await dialog.accept()
+  })
+  await page.getByRole('button', { name: 'Publish reviewed fixtures', exact: true }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Fixtures are public.' })).toBeVisible()
+  expect(posts).toEqual(['/api/cup/host/1/fixtures', '/api/cup/host/1/publish'])
+  expect(data.lifecycle).toBe('published')
+  await page.goto('/')
+  await expect(page.locator('.cup-home-fixtures .cup-match-card')).toHaveCount(10)
+  await expect(page.getByRole('heading', { name: 'Live now', exact: true })).toHaveCount(0)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Tournament', exact: true }).click()
+  await expect(page).toHaveURL(/\/tournaments$/)
+  data.lifecycle = 'running'
+  await page.goto('/')
+  await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Tournament', exact: true }).click()
+  await expect(page).toHaveURL(/\/tournaments\/1$/)
+  data.lifecycle = 'paused'
+  await page.goto('/players')
+  await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Tournament', exact: true }).click()
+  await expect(page).toHaveURL(/\/tournaments\/1$/)
+  expect(posts).toHaveLength(2)
+})
+
+test('only authenticated hosts can remove and recover a tournament, with safe uncertain-write handling', async ({ page }) => {
+  const { data } = draftFixtureGenerationData()
+  data.matches.push(structuredClone(match))
+  let authenticated = false
+  let activeMatch: number | null = 1
+  let privateReads = 0
+  let loseReceipt = false
+  const posts: { path: string; body: Record<string, unknown> }[] = []
+  await page.route('**/api/cup**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/cup-auth/session') return route.fulfill({ json: { authenticated, csrf_token: 'synthetic-only' } })
+    if (path.startsWith('/api/cup/host/requests/')) return route.fulfill({ json: {
+      request_id: path.split('/').at(-1), status: 'committed', resource: '/api/cup/host/1/archive', tournament_id: 1,
+    } })
+    if (path === '/api/cup/players') return route.fulfill({ json: { players: [] } })
+    if (path.endsWith('/history')) return route.fulfill({ json: { history: [] } })
+    if (path.endsWith('/removal')) {
+      privateReads += 1
+      return route.fulfill({ json: { tournament: { ...data, active_match_id: activeMatch,
+        archive_audit_id: data.lifecycle === 'archived' ? 101 : null } } })
+    }
+    if (path.endsWith('/undo-preview')) return route.fulfill({ json: {
+      target: { id: 101, action: 'tournament_archive' }, affected: [], expected_version: data.version,
+    } })
+    if (route.request().method() === 'POST') {
+      const body = route.request().postDataJSON()
+      posts.push({ path, body })
+      expect(body.expected_version).toBe(data.version)
+      data.version += 1
+      data.lifecycle = path.endsWith('/archive') ? 'archived' : 'draft'
+      if (loseReceipt) return route.abort('failed')
+      return route.fulfill({ json: { tournament_id: 1, version: data.version } })
+    }
+    if (path === '/api/cup/host/archived-tournaments') return route.fulfill({ json: {
+      tournaments: data.lifecycle === 'archived' ? [data] : [],
+    } })
+    if (path === '/api/cup/1' && data.lifecycle === 'archived') return route.fulfill({ status: 404, json: { error: 'Tournament not found.' } })
+    return route.fulfill({ json: path === '/api/cup' ? { tournaments: data.lifecycle === 'archived' ? [] : [data] } : { tournament: data } })
+  })
+  await page.clock.install({ time: new Date('2026-11-14T00:00:00Z') })
+  await page.clock.pauseAt(new Date('2026-11-14T00:00:01Z'))
+  await page.goto('/tournaments/1')
+  await expect(page.getByRole('heading', { name: data.name, exact: true })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Remove tournament', exact: true })).toHaveCount(0)
+  expect(privateReads).toBe(0)
+  authenticated = true
+  await page.reload()
+  const management = page.getByRole('region', { name: 'Host tournament management' })
+  const remove = management.getByRole('button', { name: 'Remove tournament', exact: true })
+  await expect(remove).toBeDisabled()
+  await expect(management).toContainText('Match 1 is active or under review')
+  activeMatch = null
+  await page.reload()
+  await expect(remove).toBeEnabled()
+  await expect(page.locator('.cup-fixtures .cup-match-card')).toHaveCount(1)
+  page.once('dialog', async (dialog) => {
+    expect(dialog.message()).toContain('retained, not deleted')
+    await dialog.accept()
+  })
+  await remove.click()
+  await expect(management.getByRole('status')).toContainText('All records are retained for recovery')
+  await expect(page.getByRole('heading', { name: data.name, exact: true })).toHaveCount(0)
+  await expect(page.locator('.cup-fixtures .cup-match-card')).toHaveCount(0)
+  await expect(page.locator('.cup-main > [role="alert"]')).toContainText('Tournament not found.')
+  await expect(management.getByRole('button', { name: 'Restore tournament', exact: true })).toBeEnabled()
+  await management.getByText('Removed tournaments · recovery', { exact: true }).click()
+  await expect(management.getByRole('link', { name: /#1/ })).toHaveAttribute('href', '/tournaments/1')
+  page.once('dialog', (dialog) => dialog.accept())
+  await management.getByRole('button', { name: 'Restore tournament', exact: true }).click()
+  await expect(management.getByRole('status')).toContainText('Tournament restored.')
+  await expect(page.getByRole('heading', { name: data.name, exact: true })).toBeVisible()
+  await expect(page.locator('.cup-fixtures .cup-match-card')).toHaveCount(1)
+  await expect(page.locator('.cup-main > [role="alert"]')).toHaveCount(0)
+  await expect(page).toHaveURL(/\/tournaments\/1$/)
+  await expect(remove).toBeEnabled()
+  expect(posts.map((row) => row.path)).toEqual(['/api/cup/host/1/archive', '/api/cup/host/1/undo'])
+  expect(posts[1].body).toMatchObject({ target_audit_id: 101, cascade: false })
+  expect(await page.evaluate(() => sessionStorage.getItem('venomsfc.internal-cup.pending-command.v1'))).toBeNull()
+  loseReceipt = true
+  page.once('dialog', (dialog) => dialog.accept())
+  await remove.click()
+  await expect(management.getByRole('alert')).toContainText('Do not repeat this request')
+  await expect(management.getByRole('link', { name: 'Open host desk' })).toBeVisible()
+  expect(posts).toHaveLength(3)
+  const pending = await page.evaluate(() => JSON.parse(sessionStorage.getItem('venomsfc.internal-cup.pending-command.v1')!))
+  expect(pending.resource).toBe('/api/cup/host/1/archive')
+  await management.getByRole('link', { name: 'Open host desk' }).click()
+  await expect(page.getByRole('button', { name: 'Create Internal Cup', exact: true })).toBeEnabled()
+  expect(await page.evaluate(() => sessionStorage.getItem('venomsfc.internal-cup.pending-command.v1'))).toBeNull()
+  expect(posts).toHaveLength(3)
+})
+
+test('tournament polling clears definite not-found details and recovers without hiding real refresh errors', async ({ page }) => {
+  let responseStatus = 200
+  await page.route('**/api/cup**', (route) => {
+    const path = new URL(route.request().url()).pathname
+    return route.fulfill({ status: path === '/api/cup/1' ? responseStatus : 200,
+      json: path === '/api/cup-auth/session' ? { authenticated: false }
+        : responseStatus === 404 ? { error: 'Tournament not found.' }
+          : responseStatus === 503 ? { error: 'Tournament refresh temporarily unavailable.' } : { tournament } })
+  })
+  await page.clock.install({ time: new Date('2026-11-14T00:00:00Z') })
+  await page.clock.pauseAt(new Date('2026-11-14T00:00:01Z'))
+  await page.goto('/tournaments/1')
+  const heading = page.getByRole('heading', { name: tournament.name, exact: true })
+  const alert = page.locator('.cup-main > [role="alert"]')
+  await expect(heading).toBeVisible()
+  responseStatus = 503
+  await page.clock.runFor(5000)
+  await expect(alert).toContainText('Tournament refresh temporarily unavailable.')
+  await expect(heading).toBeVisible()
+  responseStatus = 404
+  await page.clock.runFor(5000)
+  await expect(alert).toContainText('Tournament not found.')
+  await expect(heading).toHaveCount(0)
+  await expect(page.locator('.cup-fixtures .cup-match-card')).toHaveCount(0)
+  responseStatus = 200
+  await page.clock.runFor(5000)
+  await expect(heading).toBeVisible()
+  await expect(alert).toHaveCount(0)
+})
+
+test.describe('touch-friendly host inputs', () => {
+  test.use({ hasTouch: true })
+  test('opened selectors are dark and support touch, keyboard and a clearly labeled historical-event checkbox', async ({ page }) => {
+    const { data } = activeMatchFixture()
+    await page.route('**/api/cup**', (route) => {
+      const path = new URL(route.request().url()).pathname
+      return route.fulfill({ json: path === '/api/cup-auth/session' ? { authenticated: true, csrf_token: 'synthetic-only' }
+        : path === '/api/cup' ? { tournaments: [data] } : path.endsWith('/history') ? { history: [] }
+          : path === '/api/cup/players' ? { players: [] } : { tournament: data } })
+    })
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.goto('/tournament-host')
+    const form = page.locator('.cup-event-form').filter({ has: page.getByRole('heading', { name: /Record a match event/ }) })
+    const historical = form.getByRole('checkbox', { name: /Add an omitted earlier event/ })
+    await expect(historical).toHaveAccessibleDescription('Choose the played period and minute instead of using the live clock.')
+    const bounds = await historical.boundingBox()
+    expect(bounds?.width).toBe(22)
+    expect(bounds?.height).toBe(22)
+    await historical.check()
+    await expect(form.getByLabel('Minute', { exact: true })).toBeVisible()
+    const side = form.getByRole('combobox', { name: 'Team', exact: true })
+    await side.tap()
+    const popup = page.getByRole('listbox')
+    await expect(popup).toBeVisible()
+    await expect(popup).toHaveCSS('background-color', 'rgb(17, 42, 62)')
+    expect(await popup.evaluate((element) => {
+      const rect = element.getBoundingClientRect()
+      return rect.left >= 0 && rect.right <= innerWidth && rect.top >= 0 && rect.bottom <= innerHeight
+    })).toBe(true)
+    await popup.getByRole('option', { name: 'Vipers', exact: true }).tap()
+    await expect(side).toHaveValue('1')
+    await expect(popup).toHaveCount(0)
+    const event = form.getByRole('combobox', { name: 'Event', exact: true })
+    await event.focus()
+    await event.press('ArrowDown')
+    await expect(popup).toBeVisible()
+    await event.press('End')
+    await event.press('Enter')
+    await expect(event).toHaveValue('red_card')
+    await expect(popup).toHaveCount(0)
+    await event.press('ArrowUp')
+    await event.press('Escape')
+    await expect(event).toBeFocused()
+    await expect(popup).toHaveCount(0)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+  })
+})
 
 test('fixture save survives a follow-up read timeout and never generates a second set', async ({ page }) => {
   test.setTimeout(45_000)
@@ -1265,6 +1562,7 @@ test('active match desk leads with events, rolling subs and untimed clock contro
 })
 
 test('public scoreboard groups goals and cards by team and only animates newly confirmed goals', async ({ page }) => {
+  test.setTimeout(60_000)
   const { data, live, event, people } = activeMatchFixture()
   live.state = 'live'
   live.clock = { period: 'first_half', elapsed_seconds: 0, anchor: new Date().toISOString(), paused: false, break_started_at: null }

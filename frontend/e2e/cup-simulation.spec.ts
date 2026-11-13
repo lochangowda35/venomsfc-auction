@@ -16,6 +16,14 @@ test('real SQLite HTTP cup simulation finalizes all league and playoff fixtures 
   let tournamentId = 0
   const matchVersions = new Map<number, number>()
 
+  async function setKickoff(label: string, localTime: string) {
+    const hour = Number(localTime.slice(11, 13))
+    await page.getByLabel(`${label} date`, { exact: true }).fill(localTime.slice(0, 10))
+    await page.getByLabel(`${label} hour`, { exact: true }).selectOption(String(hour % 12 || 12))
+    await page.getByLabel(`${label} minute`, { exact: true }).selectOption(String(Number(localTime.slice(14, 16))))
+    await page.getByLabel(`${label} AM/PM`, { exact: true }).selectOption(hour >= 12 ? 'PM' : 'AM')
+  }
+
   async function json(response: APIResponse) {
     const body = await response.json()
     expect(response.status(), JSON.stringify(body)).toBeLessThan(300)
@@ -268,13 +276,13 @@ test('real SQLite HTTP cup simulation finalizes all league and playoff fixtures 
 
   const latestFinish = Math.max(...detail.tournament.matches.map((match: { finalized_at: string }) =>
     Date.parse(match.finalized_at)))
-  const thirdPlaceKickoff = new Date(latestFinish + 60_000).toISOString()
+  const thirdPlaceKickoff = new Date(Math.ceil((latestFinish + 60_000) / 60_000) * 60_000).toISOString()
   await page.goto(`${baseURL}/tournament-host`)
   await page.getByRole('button', { name: 'Match desk', exact: true }).click()
   await expect(page.getByRole('status', { name: 'Playoff qualification' })).toContainText('Your playoff line-up is set')
   await expect(page.getByRole('button', { name: 'Finish tournament', exact: true })).toBeDisabled()
   const playoffDate = new Date(thirdPlaceKickoff)
-  await page.getByLabel('Third-place kickoff', { exact: true }).fill(
+  await setKickoff('Third-place kickoff',
     new Date(playoffDate.getTime() - playoffDate.getTimezoneOffset() * 60_000).toISOString().slice(0, 16))
   await page.getByRole('button', { name: 'Add final & third-place match', exact: true }).click()
   await expect(page.getByText(/Cup action .* saved/)).toBeVisible()
@@ -288,7 +296,7 @@ test('real SQLite HTTP cup simulation finalizes all league and playoff fixtures 
   const updatedFinalTime = new Date(Date.parse(final.scheduled_at) + 60_000)
   const localFinalTime = new Date(updatedFinalTime.getTime() - updatedFinalTime.getTimezoneOffset() * 60_000)
     .toISOString().slice(0, 16)
-  await page.getByLabel('New kickoff').fill(localFinalTime)
+  await setKickoff('New kickoff', localFinalTime)
   await page.getByRole('button', { name: 'Save playoff kickoff' }).click()
   await expect(page.getByText(/Cup action .* saved/)).toBeVisible()
   detail = await json(await request.get(`${baseURL}/api/cup/${tournamentId}`))

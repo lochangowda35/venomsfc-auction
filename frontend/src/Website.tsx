@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import { ApiError, request } from './api'
 import { Portrait } from './components'
+import { CupDateTime, CupSelect } from './CupSelect'
 import type { Session } from './types'
 import venomsLogo from './assets/venoms-fc.png'
 import './Website.css'
@@ -114,6 +115,8 @@ function messageOf(error: unknown) {
 }
 
 function SiteHeader({ active }: { active: string }) {
+  const [navigationError, setNavigationError] = useState('')
+  const navigating = useRef(false)
   return <header className="cup-header">
     <a className="cup-brand" href="/" aria-label="Venoms FC home">
       <img src={venomsLogo} alt="" />
@@ -121,11 +124,28 @@ function SiteHeader({ active }: { active: string }) {
     </a>
     <nav aria-label="Main navigation">
       <a href="/" aria-current={active === 'home' ? 'page' : undefined}>Home</a>
-      <a href="/tournaments" aria-current={active === 'tournaments' ? 'page' : undefined}>Tournament</a>
+      <a href="/tournaments" aria-current={active === 'tournaments' ? 'page' : undefined}
+        onClick={async (event) => {
+          if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return
+          event.preventDefault()
+          if (navigating.current) return
+          navigating.current = true
+          setNavigationError('')
+          try {
+            const result = await request<{ tournaments: TournamentSummary[] }>('/api/cup?summary=1')
+            const current = result.tournaments.find((row) => ['running', 'paused'].includes(row.lifecycle))
+            window.location.assign(current ? `/tournaments/${current.id}` : '/tournaments')
+          } catch (caught) {
+            setNavigationError(`Could not find the current tournament. ${messageOf(caught)}`)
+          } finally {
+            navigating.current = false
+          }
+        }}>Tournament</a>
       <a href="/players" aria-current={active === 'players' ? 'page' : undefined}>Players</a>
       <a href="/auction" aria-current={active === 'auction' ? 'page' : undefined}>Auction</a>
       <a className="cup-host-link" href="/tournament-host">Tournament host ↗</a>
     </nav>
+    {navigationError && <p className="cup-alert" role="alert">{navigationError} <a href="/tournaments">Browse tournaments</a></p>}
   </header>
 }
 
@@ -322,7 +342,7 @@ function kickoffLabel(value: string | null) {
   const date = new Date(value)
   return {
     day: date.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short' }),
-    time: date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }),
+    time: date.toLocaleTimeString('en-IN', { hour: 'numeric', minute: '2-digit', hour12: true }).toUpperCase(),
   }
 }
 
@@ -438,22 +458,11 @@ function finalizedOutcome(match: Match | undefined) {
   return winner ? { winner, loser: winner.id === match.home_team.id ? match.away_team : match.home_team } : null
 }
 
-function TournamentHighlights({ tournament }: { tournament: Tournament }) {
+function ChampionBanner({ tournament }: { tournament: Tournament }) {
   const final = tournament.matches.find((match) => match.stage === 'final')
   const result = finalizedOutcome(final)
-  const metrics = [
-    { key: 'goals', title: 'Most goals', unit: 'goals' },
-    { key: 'assists', title: 'Most assists', unit: 'assists' },
-  ].map((metric) => {
-    const rows = tournament.leaderboards[metric.key] ?? []
-    const total = Math.max(0, ...rows.map((row) => row.total))
-    return { ...metric, total, leaders: rows.filter((row) => total > 0 && row.total === total) }
-  })
-  if (!result && !metrics.some((metric) => metric.leaders.length)) return null
-  const resultsComplete = tournament.matches.length === 12
-    && tournament.matches.every((match) => match.state === 'finalized')
-  return <>
-    {final && result && <section className="cup-champions-banner" aria-label="Cup champions">
+  if (!final || !result) return null
+  return <section className="cup-champions-banner" aria-label="Cup champions">
       <svg className="cup-champions-trophy" viewBox="0 0 100 110" fill="none" aria-hidden="true">
         <path d="M25 14h50v24c0 21-12 34-25 34S25 59 25 38V14Z" fill="currentColor" fillOpacity=".15" stroke="currentColor" strokeWidth="4" />
         <path d="M25 23H10v14c0 14 9 23 23 23M75 23h15v14c0 14-9 23-23 23M50 72v20M32 98h36M38 92h24" stroke="currentColor" strokeWidth="4" strokeLinecap="round" />
@@ -469,26 +478,41 @@ function TournamentHighlights({ tournament }: { tournament: Tournament }) {
           {final.home_goals === final.away_goals && <> · penalties {final.shootout.home}–{final.shootout.away}</>}</p>
         <a className="cup-champions-replay" href={`/matches/${final.id}`}>Relive the final ↗</a>
       </div>
-    </section>}
-    <section className="cup-spotlight" aria-label="Goal and assist leaders">
+    </section>
+}
+
+function TournamentHighlights({ tournament }: { tournament: Tournament }) {
+  const metrics = [
+    { key: 'goals', title: 'Most goals', unit: 'goals' },
+    { key: 'assists', title: 'Most assists', unit: 'assists' },
+  ].map((metric) => {
+    const rows = [...(tournament.leaderboards[metric.key] ?? [])].filter((row) => row.total > 0)
+      .sort((a, b) => b.total - a.total || a.player.name.localeCompare(b.player.name) || a.player.id - b.player.id)
+    return { ...metric, leaders: rows.slice(0, 3), shared: rows.filter((row) => row.total === rows[0]?.total).length }
+  })
+  if (!metrics.some((metric) => metric.leaders.length) && !finalizedOutcome(tournament.matches.find((match) => match.stage === 'final'))) return null
+  const resultsComplete = tournament.matches.length === 12
+    && tournament.matches.every((match) => match.state === 'finalized')
+  return <section className="cup-spotlight" aria-label="Goal and assist leaders">
       <SectionTitle eyebrow={resultsComplete ? 'Tournament leaders' : 'Current tournament leaders'}
         title="Leading the cup" detail={resultsComplete ? 'All fixtures finalized' : 'Live totals · provisional'} />
       <div className="cup-spotlight-grid">{metrics.map((metric) => <article className="cup-spotlight-card" key={metric.key}
         aria-label={metric.title}>
-        <header><h3>{metric.title}</h3>{metric.total > 0 && <strong>{metric.total} <small>{metric.unit}</small></strong>}</header>
+        <header><h3>{metric.title}</h3><span>Top 3</span></header>
         {metric.leaders.length ? <>
-          {metric.leaders.length > 1 && <p className="cup-spotlight-shared">Shared lead · {metric.leaders.length} players</p>}
+          {metric.shared > 1 && <p className="cup-spotlight-shared">Shared lead · {metric.shared} players</p>}
           <ul>{metric.leaders.map((row) => <li key={row.player.id}>
             <a className="cup-leader-player" href={`/players/${row.player.id}`}>
               <span className="cup-leader-photo" aria-hidden="true"><Portrait path={row.player.photo_path} name={row.player.name} /></span>
               <span className="cup-spotlight-name"><b>{row.player.name}</b><small>{row.team?.name ?? row.player.position}</small></span>
+              <strong className="cup-spotlight-total">{row.total} <small>{row.total === 1 ? metric.unit.slice(0, -1) : metric.unit}</small></strong>
             </a>
           </li>)}</ul>
         </> : <p className="cup-empty-text">No {metric.unit} recorded yet.</p>}
       </article>)}</div>
-      <p className="cup-spotlight-note">Recorded tournament goals and assists; shootout kicks are excluded. Totals update with corrected or undone events.</p>
+      <p className="cup-spotlight-note">Top three players per category; shared places and all players appear in <a href={`/tournaments/${tournament.id}?section=leaders`}>full Stats →</a>.
+        {' '}Shootout kicks are excluded. Totals update with corrected or undone events.</p>
     </section>
-  </>
 }
 
 function PlayoffAnnouncement({ tournament }: { tournament: Tournament }) {
@@ -544,7 +568,7 @@ function HomePage({ tournaments, error, loading }: { tournaments: Tournament[]; 
     .sort((a, b) => (b.finalized_at ?? '').localeCompare(a.finalized_at ?? '') || b.match_order - a.match_order)
   const announced = Boolean(featured && ['published', 'running', 'paused', 'completed'].includes(featured.lifecycle))
   return <CupLayout active="home">
-    {featured && !error && <TournamentHighlights tournament={featured} />}
+    {featured && !error && <ChampionBanner tournament={featured} />}
     {featured && !error && <PlayoffAnnouncement tournament={featured} />}
     {!loading && !error && started && <section className="cup-home-matches cup-home-matches-live" aria-label="Matchday">
       <div className="cup-home-match-group cup-home-live">
@@ -569,22 +593,27 @@ function HomePage({ tournaments, error, loading }: { tournaments: Tournament[]; 
     </section>
     {error && <div className="cup-alert" role="alert">{error}</div>}
     {loading && <p className="cup-loading" role="status">Loading the club competition…</p>}
-    {featured && announced && (upcoming.length > 0 || completed.length > 0) &&
+    {featured && announced && (upcoming.length > 0 || completed.length > 0 || live.length > 0) &&
       <section className="cup-card cup-home-fixtures" aria-labelledby="cup-home-fixtures-title">
         <div className="cup-section-title"><div><span className="cup-eyebrow">On the schedule</span>
           <h2 id="cup-home-fixtures-title">Fixtures & results</h2></div>
           <a className="cup-section-detail" href={`/tournaments/${featured.id}?section=fixtures`}>All fixtures →</a></div>
         <div className="cup-home-fixture-groups">
+          {live.length > 0 && <div className="cup-home-fixture-group">
+            <h3>On the pitch</h3>
+            <div className="cup-fixtures">{live.map((match) => <MatchCard key={match.id} match={match} />)}</div>
+          </div>}
           {upcoming.length > 0 && <div className="cup-home-fixture-group">
             <h3>Up next <small>{upcoming.length} to play</small></h3>
-            <div className="cup-fixtures">{upcoming.slice(0, 4).map((match) => <MatchCard key={match.id} match={match} />)}</div>
+            <div className="cup-fixtures">{upcoming.map((match) => <MatchCard key={match.id} match={match} />)}</div>
           </div>}
           {completed.length > 0 && <div className="cup-home-fixture-group">
-            <h3>Results <small>{completed.length > 4 ? `latest 4 of ${completed.length}` : `${completed.length} completed`}</small></h3>
-            <div className="cup-fixtures">{completed.slice(0, 4).map((match) => <MatchCard key={match.id} match={match} />)}</div>
+            <h3>Results <small>{completed.length} completed</small></h3>
+            <div className="cup-fixtures">{completed.map((match) => <MatchCard key={match.id} match={match} />)}</div>
           </div>}
         </div>
       </section>}
+    {featured && !error && <TournamentHighlights tournament={featured} />}
     {featured && announced && <a className="cup-featured-banner" href={`/tournaments/${featured.id}`}>
       <span className="cup-eyebrow">VENOMS INTERNAL CUP · {featured.edition}</span>
       <strong>{featured.name}</strong>
@@ -627,7 +656,9 @@ function TournamentsPage({ tournaments, error, loading }: { tournaments: Tournam
   </CupLayout>
 }
 
-function TournamentPage({ tournament, error, loading }: { tournament: Tournament | null; error: string; loading: boolean }) {
+function TournamentPage({ tournament, error, loading, onRemovalChanged }: {
+  tournament: Tournament | null; error: string; loading: boolean; onRemovalChanged: () => void
+}) {
   const sections = [
     ['overview', 'Overview'], ['table', 'Table'], ['fixtures', 'Fixtures'],
     ['leaders', 'Stats'], ['squads', 'Squads'],
@@ -642,6 +673,8 @@ function TournamentPage({ tournament, error, loading }: { tournament: Tournament
     <div className="cup-breadcrumb"><a href="/">Home</a><span>/</span><a href="/tournaments">Tournaments</a><span>/</span><span>Internal Cup</span></div>
     {error && <div className="cup-alert" role="alert">{error}</div>}
     {loading && <p className="cup-loading" role="status">Loading tournament details…</p>}
+    <TournamentRemoval tournamentId={Number(window.location.pathname.split('/').at(-1))}
+      version={tournament?.version} onRemovalChanged={onRemovalChanged} />
     {tournament && <>
       <section className="cup-tournament-hero">
         <div><span className="cup-eyebrow">{tournament.edition} · VENOMS FC</span><h1>{tournament.name}</h1>
@@ -653,7 +686,7 @@ function TournamentPage({ tournament, error, loading }: { tournament: Tournament
           href={key === 'overview' ? `/tournaments/${tournament.id}` : `/tournaments/${tournament.id}?section=${key}`}
           aria-current={selectedSection === key ? 'page' : undefined}>{label}</a>)}
       </nav>
-      <TournamentHighlights tournament={tournament} />
+      <ChampionBanner tournament={tournament} />
       <PlayoffAnnouncement tournament={tournament} />
       {selectedSection === 'overview' && <section className="cup-overview-strip">
         <div><strong>{tournament.teams.length || 5}</strong><span>teams</span></div>
@@ -662,6 +695,7 @@ function TournamentPage({ tournament, error, loading }: { tournament: Tournament
         <div><strong>{tournament.standings.reduce((sum, row) => sum + row.goals_for, 0)}</strong><span>league goals</span></div>
       </section>}
       {showSection('table') && <Table tournament={tournament} tieDecisionNeeded={tieDecisionNeeded} />}
+      <TournamentHighlights tournament={tournament} />
       {showSection('table') && <QualificationOutlook tournament={tournament} />}
       {showSection('fixtures') && <section className="cup-card">
         <SectionTitle eyebrow="Schedule" title="Fixtures & results" detail="One pitch · no back-to-back team appearances" />
@@ -678,7 +712,7 @@ function TournamentPage({ tournament, error, loading }: { tournament: Tournament
           metric="LIVE · PROVISIONAL" rows={tournament.leaderboards[key] ?? []} />)}
       </div>}
       {showSection('squads') && <Squads teams={tournament.teams} />}
-      <p className="cup-updated"><span>Live / provisional standings · Cup host activity last recorded {new Date(tournament.updated_at).toLocaleString()}</span>
+      <p className="cup-updated"><span>Live / provisional standings · Cup host activity last recorded {new Date(tournament.updated_at).toLocaleString(undefined, { hour12: true })}</span>
         {tieDecisionNeeded ? ' · Host ranking decision pending' : ''}</p>
     </>}
   </CupLayout>
@@ -793,7 +827,7 @@ function MatchPage({ match, error, loading }: { match: Match | null; error: stri
             : isHalfTime ? 'Half-time break'
               : match.clock.period
                 ? `${match.clock.period.replace(/_/g, ' ')}${match.state === 'live' ? ` · ${clockLabel}` : match.state === 'paused' ? ` · paused at ${clockLabel}` : ''}`
-            : match.scheduled_at ? new Date(match.scheduled_at).toLocaleString() : 'Kickoff pending'}</small></div>
+            : match.scheduled_at ? new Date(match.scheduled_at).toLocaleString(undefined, { hour12: true }) : 'Kickoff pending'}</small></div>
         <a href={match.away_team ? `/teams/${match.away_team.id}` : '#'}>{match.away_team && <Portrait path={match.away_team.logo_path} name={match.away_team.name} className="cup-score-logo" />}
           <strong>{match.away_team?.name ?? 'To be confirmed'}</strong></a>
       </div>
@@ -889,10 +923,17 @@ export default function Website() {
   const [error, setError] = useState('')
   const [tournaments, setTournaments] = useState<Tournament[]>([])
   const [tournament, setTournament] = useState<Tournament | null>(null)
+  const [tournamentRefresh, setTournamentRefresh] = useState(0)
   const [players, setPlayers] = useState<Player[]>([])
   const [player, setPlayer] = useState<Player | null>(null)
   const [match, setMatch] = useState<Match | null>(null)
   const [team, setTeam] = useState<Team | null>(null)
+  const refreshTournament = useCallback(() => {
+    setTournament(null)
+    setError('')
+    setLoading(true)
+    setTournamentRefresh((revision) => revision + 1)
+  }, [])
 
   useEffect(() => {
     const title = path === '/' || path === '/home' ? 'Venoms FC | Internal Cup'
@@ -919,7 +960,9 @@ export default function Website() {
       try {
         if (path === '/' || path === '/home') {
           const result = await request<{ tournaments: TournamentSummary[] }>('/api/cup?summary=1', { signal: controller.signal })
-          const featured = result.tournaments[0]
+          const featured = result.tournaments.find((row) => ['running', 'paused'].includes(row.lifecycle))
+            ?? result.tournaments.find((row) => row.lifecycle === 'published')
+            ?? result.tournaments.find((row) => row.lifecycle === 'completed') ?? result.tournaments[0]
           const details = featured
             ? await request<{ tournament: Tournament }>(`/api/cup/${featured.id}`, { signal: controller.signal })
             : null
@@ -932,7 +975,7 @@ export default function Website() {
           setPlayers(result.players)
         } else if (/^\/tournaments\/\d+$/.test(path)) {
           const result = await request<{ tournament: Tournament }>(`/api/cup/${path.split('/').at(-1)}`, { signal: controller.signal })
-          setTournament(result.tournament)
+          if (!controller.signal.aborted) setTournament(result.tournament)
         } else if (/^\/players\/\d+$/.test(path)) {
           const result = await request<{ player: Player }>(`/api/cup/players/${path.split('/').at(-1)}`, { signal: controller.signal })
           setPlayer(result.player)
@@ -944,7 +987,12 @@ export default function Website() {
           setTeam(result.team)
         }
       } catch (caught) {
-        if (!controller.signal.aborted) setError(messageOf(caught))
+        if (!controller.signal.aborted) {
+          if (/^\/tournaments\/\d+$/.test(path) && caught instanceof ApiError && caught.status === 404) {
+            setTournament(null)
+          }
+          setError(messageOf(caught))
+        }
       } finally {
         if (!controller.signal.aborted) {
           hasLoaded = true
@@ -956,13 +1004,14 @@ export default function Website() {
     void load()
     const timer = window.setInterval(() => void load(), 5000)
     return () => { controller.abort(); window.clearInterval(timer) }
-  }, [path])
+  }, [path, tournamentRefresh])
 
   if (path === '/tournament-host') return <TournamentHostPage />
   if (path === '/' || path === '/home') return <HomePage tournaments={tournaments} error={error} loading={loading} />
   if (path === '/tournaments') return <TournamentsPage tournaments={tournaments} error={error} loading={loading} />
   if (path === '/players') return <PlayersPage players={players} error={error} loading={loading} />
-  if (/^\/tournaments\/\d+$/.test(path)) return <TournamentPage tournament={tournament} error={error} loading={loading} />
+  if (/^\/tournaments\/\d+$/.test(path)) return <TournamentPage tournament={tournament} error={error}
+    loading={loading} onRemovalChanged={refreshTournament} />
   if (/^\/players\/\d+$/.test(path)) return <PlayerPage player={player} error={error} loading={loading} />
   if (/^\/matches\/\d+$/.test(path)) return <MatchPage match={match} error={error} loading={loading} />
   if (/^\/teams\/\d+$/.test(path)) return <TeamPage team={team} error={error} loading={loading} />
@@ -973,6 +1022,146 @@ export default function Website() {
 
 type HostHistory = { id: number; action: string; match_id: number | null; created_at: string; details: Record<string, unknown>; undone: boolean }
 type CupSession = Pick<Session, 'authenticated' | 'csrf_token'>
+
+function ArchivedTournaments() {
+  const [rows, setRows] = useState<{ id: number; name: string; edition: string }[] | null>(null)
+  const [error, setError] = useState('')
+  return <details className="cup-archived-tournaments" onToggle={async (event) => {
+    if (!event.currentTarget.open) return
+    setError('')
+    try {
+      const result = await request<{ tournaments: { id: number; name: string; edition: string }[] }>('/api/cup/host/archived-tournaments')
+      setRows(result.tournaments)
+    } catch (caught) { setError(messageOf(caught)) }
+  }}>
+    <summary>Removed tournaments · recovery</summary>
+    {error && <p role="alert">{error}</p>}
+    {rows === null ? <p role="status">Loading removed tournaments…</p> : rows.length
+      ? <ul>{rows.map((row) => <li key={row.id}><a href={`/tournaments/${row.id}`}>{row.name} · {row.edition} · #{row.id} →</a></li>)}</ul>
+      : <p>No removed tournaments.</p>}
+  </details>
+}
+
+type RemovalStatus = {
+  id: number; name: string; version: number; lifecycle: string
+  archive_audit_id: number | null; active_match_id: number | null
+}
+
+function TournamentRemoval({ tournamentId, version, onRemovalChanged }: {
+  tournamentId: number; version?: number; onRemovalChanged: () => void
+}) {
+  const [session, setSession] = useState<CupSession | null>(null)
+  const [status, setStatus] = useState<RemovalStatus | null>(null)
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const [blocked, setBlocked] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const inFlight = useRef(false)
+
+  const refresh = useCallback(async () => {
+    try {
+      const result = await request<{ tournament: RemovalStatus }>(`/api/cup/host/${tournamentId}/removal`)
+      setStatus(result.tournament)
+      setError('')
+    } catch (caught) {
+      setStatus(null)
+      setError(`Host removal controls could not be refreshed. ${messageOf(caught)}`)
+    }
+  }, [tournamentId])
+
+  useEffect(() => {
+    const controller = new AbortController()
+    async function load() {
+      try {
+        const current = await request<CupSession>('/api/cup-auth/session', { signal: controller.signal })
+        if (controller.signal.aborted) return
+        setSession(current)
+        if (current.authenticated) {
+          setBlocked(window.sessionStorage.getItem(pendingCupCommandKey) !== null)
+          await refresh()
+        }
+      } catch (caught) {
+        if (!controller.signal.aborted) {
+          setBlocked(true)
+          setError(`Host removal controls are unavailable. ${messageOf(caught)}`)
+        }
+      }
+    }
+    void load()
+    return () => controller.abort()
+  }, [tournamentId, version, refresh])
+
+  async function changeRemoval() {
+    if (!session?.csrf_token || !status || blocked || inFlight.current) return
+    inFlight.current = true
+    setBusy(true)
+    setError('')
+    setNotice('')
+    let sent = false
+    let confirmed = false
+    try {
+      const restoring = status.lifecycle === 'archived'
+      let resource = `/api/cup/host/${tournamentId}/archive`
+      let body: Record<string, unknown> = { expected_version: status.version }
+      if (restoring) {
+        if (!status.archive_audit_id) throw new Error('This removal has no reversible archive action. Review its host history before recovering it.')
+        const preview = await request<{ target: { id: number; action: string } | null; affected: { id: number }[]; expected_version: number }>(
+          `/api/cup/host/${tournamentId}/undo-preview?target_audit_id=${status.archive_audit_id}`,
+        )
+        if (preview.target?.action !== 'tournament_archive' || preview.affected.length) {
+          throw new Error('The removal changed or has later dependent actions. Review host history before recovering it.')
+        }
+        resource = `/api/cup/host/${tournamentId}/undo`
+        body = { expected_version: preview.expected_version, target_audit_id: preview.target.id, cascade: false }
+      }
+      if (!window.confirm(restoring
+        ? `Restore "${status.name}" to the tournament lists? Its retained fixtures, results and history will reappear.`
+        : `Remove "${status.name}" from public and host tournament lists? Fixtures, results, history and all player/team records are retained, not deleted. You can restore it from Removed tournaments · recovery.`)) return
+      const command: PendingCupCommand = {
+        request_id: requestId(), resource, tournament_id: tournamentId, body: {},
+      }
+      command.body = { ...body, request_id: command.request_id }
+      window.sessionStorage.setItem(pendingCupCommandKey, JSON.stringify(command))
+      setBlocked(true)
+      sent = true
+      await request(resource, { method: 'POST', csrf: session.csrf_token, body: command.body })
+      confirmed = true
+      setNotice(restoring ? 'Tournament restored. Its retained records are available again.'
+        : 'Tournament removed from lists. All records are retained for recovery; nothing was deleted.')
+      window.sessionStorage.removeItem(pendingCupCommandKey)
+      setBlocked(false)
+      setStatus(null)
+      onRemovalChanged()
+      await refresh()
+    } catch (caught) {
+      setError(`${messageOf(caught)}${sent
+        ? confirmed ? ' The action was saved, but its local receipt needs reconciliation. Open the host desk; do not repeat it.'
+          : ' Do not repeat this request. Open the host desk to reconcile its recorded outcome.'
+        : ' Nothing was sent.'}`)
+    } finally {
+      inFlight.current = false
+      setBusy(false)
+    }
+  }
+
+  if (!session?.authenticated) return error ? <p className="cup-inline-warning" role="status">{error}</p> : null
+  return <section className="cup-card cup-tournament-removal" aria-label="Host tournament management">
+    <h2>Host tournament management</h2>
+    {error && <p className="cup-alert" role="alert">{error} <button type="button" disabled={busy} onClick={() => void refresh()}>Refresh controls</button></p>}
+    {notice && <p role="status">{notice}</p>}
+    {blocked && <p role="status">A saved Cup request needs reconciliation before another change. <a href="/tournament-host">Open host desk →</a></p>}
+    {status && <>
+      <p>{status.lifecycle === 'archived' ? 'This tournament is removed from normal lists. Its records remain intact.'
+        : 'Remove duplicate tournaments without deleting their records. Public visitors cannot use these host controls.'}</p>
+      {status.active_match_id && <p id="cup-removal-guard">Match {status.active_match_id} is active or under review. Finalize it or undo its start before removing this tournament.</p>}
+      <button type="button" className="secondary" disabled={busy || blocked || !!status.active_match_id
+        || (status.lifecycle === 'archived' && !status.archive_audit_id)}
+        aria-describedby={status.active_match_id ? 'cup-removal-guard' : undefined}
+        onClick={() => void changeRemoval()}>{status.lifecycle === 'archived' ? 'Restore tournament' : 'Remove tournament'}</button>
+    </>}
+    <ArchivedTournaments />
+  </section>
+}
 
 function TournamentHostPage() {
   const [session, setSession] = useState<CupSession | null>(null)
@@ -1336,63 +1525,63 @@ export function CupHostDesk({ session, canMutate }: { session: CupSession | null
         {event.event_type !== 'shootout' && <>
           <label>Minute <input type="number" min={0} max={300} value={correctMinute}
             onChange={(change) => setCorrectMinute(Number(change.target.value))} /></label>
-          <label>Team <select value={correctTeam ?? ''} onChange={(change) => {
+          <label>Team <CupSelect value={correctTeam ?? ''} onChange={(change) => {
             setCorrectTeam(Number(change.target.value) || null)
             setCorrectPlayer(null); setCorrectAssist(null); setCorrectKeeper(null)
             setCorrectIncoming(null); setCorrectReplacement(null)
           }}>
             {[match.home_team, match.away_team].filter((row): row is Team => row !== null)
               .map((side) => <option key={side.id} value={side.id}>{side.name}</option>)}
-          </select></label>
-          <label>{event.event_type === 'substitution' ? 'Player going off' : 'Player'} <select value={correctPlayer ?? ''} onChange={(change) => setCorrectPlayer(Number(change.target.value) || null)}>
+          </CupSelect></label>
+          <label>{event.event_type === 'substitution' ? 'Player going off' : 'Player'} <CupSelect value={correctPlayer ?? ''} onChange={(change) => setCorrectPlayer(Number(change.target.value) || null)}>
             <option value="">Choose player</option>{match.participations.filter((row) => row.team_id === correctTeam)
               .flatMap((row) => row.player ? [row.player] : []).map((person) =>
                 <option key={person.id} value={person.id}>{person.name}</option>)}
-          </select></label>
+          </CupSelect></label>
           {event.event_type === 'shot' && <>
-            <label>Outcome <select value={correctOutcome} onChange={(change) => {
+            <label>Outcome <CupSelect value={correctOutcome} onChange={(change) => {
               setCorrectOutcome(change.target.value); setCorrectAssist(null); setCorrectKeeper(null)
             }}>
               <option value="goal">Goal</option><option value="saved">Saved</option>
               <option value="off_target">Off target</option><option value="blocked">Blocked</option>
-            </select></label>
-            {correctOutcome === 'goal' && <label>Assist <select value={correctAssist ?? ''}
+            </CupSelect></label>
+            {correctOutcome === 'goal' && <label>Assist <CupSelect value={correctAssist ?? ''}
               onChange={(change) => setCorrectAssist(Number(change.target.value) || null)}>
               <option value="">No assist</option>{match.participations.filter((row) => row.team_id === correctTeam)
                 .flatMap((row) => row.player && row.player.id !== correctPlayer ? [row.player] : [])
                 .map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}
-            </select></label>}
-            {correctOutcome === 'saved' && <label>Opposing goalkeeper <select value={correctKeeper ?? ''}
+            </CupSelect></label>}
+            {correctOutcome === 'saved' && <label>Opposing goalkeeper <CupSelect value={correctKeeper ?? ''}
               onChange={(change) => setCorrectKeeper(Number(change.target.value) || null)}>
               <option value="">Choose goalkeeper</option>{match.participations.filter((row) => row.team_id !== correctTeam)
                 .flatMap((row) => row.player ? [row.player] : [])
                 .map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}
-            </select></label>}
+            </CupSelect></label>}
           </>}
           {['yellow_card', 'red_card'].includes(event.event_type) && <>
-            <label>Card <select value={correctType} onChange={(change) => setCorrectType(change.target.value)}>
+            <label>Card <CupSelect value={correctType} onChange={(change) => setCorrectType(change.target.value)}>
               <option value="yellow_card">Yellow card</option><option value="red_card">Red card</option>
-            </select></label>
-            <label>Replacement goalkeeper (if needed) <select value={correctReplacement ?? ''}
+            </CupSelect></label>
+            <label>Replacement goalkeeper (if needed) <CupSelect value={correctReplacement ?? ''}
               onChange={(change) => setCorrectReplacement(Number(change.target.value) || null)}>
               <option value="">Not needed</option>{match.participations.filter((row) => row.team_id === correctTeam)
                 .flatMap((row) => row.player && row.player.id !== correctPlayer ? [row.player] : [])
                 .map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}
-            </select></label>
+            </CupSelect></label>
           </>}
-          {event.event_type === 'substitution' && <label>Player coming on <select value={correctIncoming ?? ''}
+          {event.event_type === 'substitution' && <label>Player coming on <CupSelect value={correctIncoming ?? ''}
             onChange={(change) => setCorrectIncoming(Number(change.target.value) || null)}>
             <option value="">Choose substitute</option>{match.participations.filter((row) => row.team_id === correctTeam)
               .flatMap((row) => row.player && row.player.id !== correctPlayer ? [row.player] : [])
               .map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}
-          </select></label>}
+          </CupSelect></label>}
           <label className="cup-check"><input type="checkbox" checked={correctVoid}
             onChange={(change) => setCorrectVoid(change.target.checked)} /> Remove only this event (later events stay)</label>
         </>}
-        {event.event_type === 'shootout' && <label>Penalty outcome <select value={correctScored ? 'scored' : 'missed'}
+        {event.event_type === 'shootout' && <label>Penalty outcome <CupSelect value={correctScored ? 'scored' : 'missed'}
           onChange={(change) => setCorrectScored(change.target.value === 'scored')}>
           <option value="scored">Scored</option><option value="missed">Missed</option>
-        </select></label>}
+        </CupSelect></label>}
       </div>
       <div className="cup-glance-edit-actions">
         <button disabled={!writesAvailable || busy || (!correctVoid && event.event_type !== 'shootout'
@@ -1437,7 +1626,7 @@ export function CupHostDesk({ session, canMutate }: { session: CupSession | null
       setTournaments(list.tournaments)
       const roster = await request<{ players: Player[] }>('/api/cup/players', { signal: controller.signal })
       setCupPlayers(roster.players)
-      const id = targetId ?? list.tournaments[0]?.id
+      const id = list.tournaments.some((row) => row.id === targetId) ? targetId : list.tournaments[0]?.id
       if (id) {
         const detail = await request<{ tournament: Tournament }>(`/api/cup/${id}`, { signal: controller.signal })
         selectedTournamentId.current = id
@@ -1463,6 +1652,7 @@ export function CupHostDesk({ session, canMutate }: { session: CupSession | null
         const audit = await request<{ history: HostHistory[] }>(`/api/cup/host/${id}/history`, { signal: controller.signal })
         setHistory(audit.history)
       } else {
+        selectedTournamentId.current = undefined
         setTournament(null)
         setHistory([])
         setCupPlayers([])
@@ -1851,11 +2041,12 @@ export function CupHostDesk({ session, canMutate }: { session: CupSession | null
       onClick={() => void send('/api/cup/host/tournaments', { name: 'Venoms Internal Cup', edition: '1st Edition' }, undefined)}>
       Create Internal Cup
     </button> : <label className="cup-host-select">Tournament
-      <select value={tournament?.id ?? ''} disabled={busy || refreshing || pendingCommand !== null}
+      <CupSelect value={tournament?.id ?? ''} disabled={busy || refreshing || pendingCommand !== null}
         onChange={(event) => void refreshCup(Number(event.target.value))}>
         {tournaments.map((row) => <option value={row.id} key={row.id}>{row.name} · {row.edition}</option>)}
-      </select>
+      </CupSelect>
     </label>}
+    <ArchivedTournaments />
     {tournament && <div className="cup-host-workspace">
       <PlayoffAnnouncement tournament={tournament} />
       <nav className="cup-host-tabs" aria-label="Tournament host sections">
@@ -1949,7 +2140,7 @@ export function CupHostDesk({ session, canMutate }: { session: CupSession | null
         <div className="cup-roster-editor">
           <h4>Manage cup rosters</h4>
           <p>{assignedRosterCount} assigned · {Math.max(0, cupPlayers.length - assignedRosterCount)} available. Changes affect only this cup and are undoable.</p>
-          <label>Player <select aria-label="Cup roster player" value={rosterPlayerId ?? ''}
+          <label>Player <CupSelect aria-label="Cup roster player" value={rosterPlayerId ?? ''}
             onChange={(event) => {
               const playerId = Number(event.target.value) || null
               setRosterPlayerId(playerId)
@@ -1961,12 +2152,12 @@ export function CupHostDesk({ session, canMutate }: { session: CupSession | null
             {cupPlayers.map((player) => <option value={player.id} key={player.id}>
               {player.name} · {player.teams?.[0]?.name ?? 'available'}
             </option>)}
-          </select></label>
-          <label>Assign to <select aria-label="Cup roster team" value={rosterTeamId ?? ''}
+          </CupSelect></label>
+          <label>Assign to <CupSelect aria-label="Cup roster team" value={rosterTeamId ?? ''}
             onChange={(event) => setRosterTeamId(Number(event.target.value) || null)}>
             <option value="">Remove from cup roster</option>
             {tournament.teams.map((team) => <option value={team.id} key={team.id}>{team.name}</option>)}
-          </select></label>
+          </CupSelect></label>
           <button className="secondary" disabled={!writesAvailable || busy || !rosterPlayerId
             || (rosterTeamId === null ? !selectedRosterTeam : rosterTeamId === selectedRosterTeam?.id)}
             onClick={() => void send(`/api/cup/host/${tournament.id}/rosters`, {
@@ -1974,7 +2165,7 @@ export function CupHostDesk({ session, canMutate }: { session: CupSession | null
             })}>Save roster change</button>
           <h4>Tournament profiles</h4>
           <p>Changes are kept separately from auction profiles. A new player can be assigned above after saving.</p>
-          <label>Profile <select value={profileChoice} disabled={busy} onChange={(event) => {
+          <label>Profile <CupSelect value={profileChoice} disabled={busy} onChange={(event) => {
             const choice = event.target.value
             setProfileChoice(choice)
             const [type, id] = choice.split(':')
@@ -1990,12 +2181,12 @@ export function CupHostDesk({ session, canMutate }: { session: CupSession | null
              <option key={item.id} value={`player:${item.id}`}>{item.name}</option>)}</optgroup>
             <optgroup label="Teams">{tournament.teams.map((item) =>
              <option key={item.id} value={`team:${item.id}`}>{item.name}</option>)}</optgroup>
-          </select></label>
+          </CupSelect></label>
           <label>Name <input value={profileName} maxLength={120} onChange={(event) => setProfileName(event.target.value)} /></label>
-          {!profileChoice.startsWith('team:') && <label>Position <select value={profilePosition}
+          {!profileChoice.startsWith('team:') && <label>Position <CupSelect value={profilePosition}
             onChange={(event) => setProfilePosition(event.target.value)}>
             {['GK', 'DEF', 'MID', 'ST'].map((position) => <option key={position} value={position}>{position}</option>)}
-          </select></label>}
+          </CupSelect></label>}
           <label>Local image path (optional for players) <input value={profileImage} maxLength={500}
             onChange={(event) => setProfileImage(event.target.value)} /></label>
           <label>Upload a Cup photo or logo <input type="file" accept="image/jpeg,image/png,image/webp"
@@ -2016,17 +2207,22 @@ export function CupHostDesk({ session, canMutate }: { session: CupSession | null
       </section>}
       {hostTab === 'fixtures' && <>
       <section className="cup-host-card"><h3>Fixture schedule</h3>
-        <label>{tournament.lifecycle === 'running' ? 'First pending kickoff' : 'First kickoff'} <input type="datetime-local" value={kickoff} onChange={(event) => {
+        <p>Prepare, review and publish fixtures before matchday. Publishing makes the complete schedule visible to players; it does not start the tournament or a match.</p>
+        <CupDateTime label={tournament.lifecycle === 'running' ? 'First pending kickoff' : 'First kickoff'} value={kickoff} onChange={(value) => {
           kickoffSource.current.dirty = true
-          setKickoff(event.target.value)
-        }} /></label>
+          setKickoff(value)
+        }} />
         <p>One pitch · ten round-robin fixtures. The saved schedule includes suggested rest between matches, but the host can start a ready match at any time when the pitch is free. Started and completed matches stay in place.</p>
         <div className="cup-host-actions">
           <button className="secondary" disabled={!writesAvailable || busy || !kickoff || tournament.lifecycle !== 'draft' || tournament.matches.length > 0}
             onClick={() => void send(`/api/cup/host/${tournament.id}/fixtures`, { kickoff: new Date(kickoff).toISOString() })}>Generate fixtures</button>
           <button disabled={!writesAvailable || busy || tournament.lifecycle !== 'draft' || tournament.matches.length !== 10}
-            onClick={() => void send(`/api/cup/host/${tournament.id}/publish`, {})}>Publish reviewed fixtures</button>
+            onClick={() => {
+              if (!window.confirm('Publish this reviewed schedule for players to see? This does not start the tournament or any match.')) return
+              void send(`/api/cup/host/${tournament.id}/publish`, {})
+            }}>Publish reviewed fixtures</button>
         </div>
+        {tournament.lifecycle === 'published' && <p role="status">Fixtures are public. Players can see the full schedule on the home page now, before you start the tournament.</p>}
         {tournament.matches.length > 0 && <div className="cup-fixtures cup-host-fixtures">
           {orderedDraftFixtures.map((row, index) => <div className="cup-fixture-order-row" key={row.id}>
             <MatchCard match={row} />
@@ -2064,8 +2260,8 @@ export function CupHostDesk({ session, canMutate }: { session: CupSession | null
               disabled={!writesAvailable || busy || tournament.lifecycle === 'paused'}>
               <legend>Tied places {rank}–{rank + rows.length - 1}</legend>
               {rows.map((_, index) => <label className="cup-host-select" key={index}>Place {rank + index}
-                <select value={tieOrders[rank]?.[index] || ''} onChange={(event) => {
-                  const teamId = Number(event.currentTarget.value)
+                <CupSelect value={tieOrders[rank]?.[index] || ''} onChange={(event) => {
+                  const teamId = Number(event.target.value)
                   setTieOrders((current) => {
                     const order = [...(current[rank] ?? rows.map(() => 0))]
                     order[index] = teamId
@@ -2075,7 +2271,7 @@ export function CupHostDesk({ session, canMutate }: { session: CupSession | null
                   <option value="">Choose team</option>
                   {rows.map((row) => <option value={row.id} key={row.id}
                     disabled={tieOrders[rank]?.some((id, position) => id === row.id && position !== index)}>{row.name}</option>)}
-                </select>
+                </CupSelect>
               </label>)}
             </fieldset>)}
             <button disabled={!writesAvailable || busy || tournament.lifecycle === 'paused' || tiedGroups.some(([rank, rows]) =>
@@ -2091,8 +2287,8 @@ export function CupHostDesk({ session, canMutate }: { session: CupSession | null
           </div>}
           <h3>Add final &amp; third-place match</h3>
           <p>Resolve any exact league-table ties before qualification. Third place plays fourth; first place plays second in the final.</p>
-          <label>Third-place kickoff <input type="datetime-local" value={playoffKickoff} onChange={(event) => setPlayoffKickoff(event.target.value)} /></label>
-          <button disabled={!writesAvailable || busy || tournament.lifecycle === 'paused' || !!tournament.unresolved_tie} onClick={() => void send(`/api/cup/host/${tournament.id}/playoffs`, {
+          <CupDateTime label="Third-place kickoff" value={playoffKickoff} onChange={setPlayoffKickoff} />
+          <button disabled={!writesAvailable || busy || !playoffKickoff || tournament.lifecycle === 'paused' || !!tournament.unresolved_tie} onClick={() => void send(`/api/cup/host/${tournament.id}/playoffs`, {
             kickoff: new Date(playoffKickoff).toISOString(),
           })}>Add final &amp; third-place match</button>
         </section>}
@@ -2101,11 +2297,11 @@ export function CupHostDesk({ session, canMutate }: { session: CupSession | null
         <h3>Match control & scoring</h3>
         {activeMatchOnPitch ? <p className="cup-host-notice" role="status">Match {activeMatchOnPitch.match_order} is on the pitch. Other fixtures unlock after it is finalized.</p> : <>
         <p>Select any ready league match and start it whenever the pitch is free. Rest intervals do not block kickoff. Playoffs require completed league qualification.</p>
-        <label className="cup-host-select">Match <select value={selectedMatchId ?? ''} onChange={(event) => setSelectedMatchId(Number(event.target.value))}>
+        <label className="cup-host-select">Match <CupSelect value={selectedMatchId ?? ''} onChange={(event) => setSelectedMatchId(Number(event.target.value))}>
           <option value="">Choose a match</option>{tournament.matches.map((row) => <option value={row.id} key={row.id}>
             {row.match_order}. {row.home_team?.name ?? 'TBC'} v {row.away_team?.name ?? 'TBC'} · {row.state}
           </option>)}
-        </select></label></>}
+        </CupSelect></label></>}
         {tournament.lifecycle === 'paused' && <p className="cup-host-notice" role="status">Tournament paused — use Resume tournament above to unlock match controls. Host activity & undo remains available below.</p>}
         {selectedMatch && <fieldset className="cup-host-match" disabled={tournament.lifecycle === 'paused'}>
           <div className="cup-host-score">
@@ -2196,10 +2392,10 @@ export function CupHostDesk({ session, canMutate }: { session: CupSession | null
               </p> : <div className="cup-shootout-finish">
                 <p>Finish at any point, even before all kicks are taken. Recorded kicks stay unchanged.</p>
                 {selectedMatch.shootout.home === selectedMatch.shootout.away && <label>Winner awarded by host
-                  <select value={finishPenaltyWinner ?? ''} onChange={(event) => setFinishPenaltyWinner(Number(event.target.value) || null)}>
+                  <CupSelect value={finishPenaltyWinner ?? ''} onChange={(event) => setFinishPenaltyWinner(Number(event.target.value) || null)}>
                     <option value="">Choose the winning team</option>
                     {[selectedMatch.home_team, selectedMatch.away_team].map((team) => team && <option key={team.id} value={team.id}>{team.name}</option>)}
-                  </select>
+                  </CupSelect>
                 </label>}
                 <button type="button" className="secondary" disabled={!writesAvailable || busy
                   || (selectedMatch.shootout.home === selectedMatch.shootout.away
@@ -2294,48 +2490,49 @@ export function CupHostDesk({ session, canMutate }: { session: CupSession | null
           </div>
           {['live', 'paused', 'review', 'finalized'].includes(selectedMatch.state) && <div className="cup-event-form">
             <h4>Record a match event <small>{['live', 'paused'].includes(selectedMatch.state) && !historicalEntry ? 'The minute is taken from the match clock when you save.' : 'Offline writes are blocked; check history after reconnecting.'}</small></h4>
-            {['live', 'paused'].includes(selectedMatch.state) && <label><input type="checkbox" checked={historicalEntry}
-              onChange={(event) => setHistoricalEntry(event.target.checked)} /> Add an omitted earlier event</label>}
+            {['live', 'paused'].includes(selectedMatch.state) && <label className="cup-check cup-historical-entry"><input type="checkbox" checked={historicalEntry}
+              aria-describedby="cup-historical-entry-help" onChange={(event) => setHistoricalEntry(event.target.checked)} />
+              <span>Add an omitted earlier event<small id="cup-historical-entry-help">Choose the played period and minute instead of using the live clock.</small></span></label>}
             {(historicalEntry || ['review', 'finalized'].includes(selectedMatch.state)) && <>
               <p>Omitted events must follow all previously recorded match events. Undo dependent later actions first if this event belongs earlier.</p>
-              <label>Played period <select value={historicalPeriod} onChange={(event) => setHistoricalPeriod(event.target.value)}>
+              <label>Played period <CupSelect value={historicalPeriod} onChange={(event) => setHistoricalPeriod(event.target.value)}>
                 <option value="first_half">First half</option><option value="second_half">Second half</option>
                 <option value="extra_time_1">Extra time 1</option><option value="extra_time_2">Extra time 2</option>
-              </select></label>
+              </CupSelect></label>
             </>}
             <div className="cup-event-controls">
-              <label>Team <select value={eventTeam ?? ''} onChange={(event) => {
+              <label>Team <CupSelect value={eventTeam ?? ''} onChange={(event) => {
                 setEventTeam(Number(event.target.value) || null)
                 setEventPlayer(null); setEventAssist(null); setEventKeeper(null)
               }}><option value="">Choose team</option>
                 {[selectedMatch.home_team, selectedMatch.away_team].filter((row): row is Team => row !== null).map((side) => <option key={side.id} value={side.id}>{side.name}</option>)}
-              </select></label>
-              <label>Player <select value={eventPlayer ?? ''} onChange={(event) => {
+              </CupSelect></label>
+              <label>Player <CupSelect value={eventPlayer ?? ''} onChange={(event) => {
                 setEventPlayer(Number(event.target.value) || null)
                 setReplacementKeeper(null)
               }}>
                 <option value="">Choose player</option>{activeEventPlayers.map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}
-              </select></label>
+              </CupSelect></label>
               {(historicalEntry || ['review', 'finalized'].includes(selectedMatch.state)) && <label>Minute <input type="number" min={0} max={300} value={eventMinute} onChange={(event) => setEventMinute(Number(event.target.value))} /></label>}
-              <label>Event <select value={eventOutcome} onChange={(event) => {
+              <label>Event <CupSelect value={eventOutcome} onChange={(event) => {
                 setEventOutcome(event.target.value)
                 setReplacementKeeper(null)
               }}>
                 <option value="goal">Shot · goal</option><option value="saved">Shot · saved</option>
                 <option value="off_target">Shot · off target</option><option value="blocked">Shot · blocked</option>
                 <option value="own_goal">Own goal</option><option value="yellow_card">Yellow card</option><option value="red_card">Red card</option>
-              </select></label>
-              {eventOutcome === 'goal' && <label>Assist (optional) <select value={eventAssist ?? ''} onChange={(event) => setEventAssist(Number(event.target.value) || null)}>
+              </CupSelect></label>
+              {eventOutcome === 'goal' && <label>Assist (optional) <CupSelect value={eventAssist ?? ''} onChange={(event) => setEventAssist(Number(event.target.value) || null)}>
                 <option value="">No assist</option>{activeEventPlayers.filter((person) => person.id !== eventPlayer).map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}
-              </select></label>}
-              {eventOutcome === 'saved' && <label>Opposing goalkeeper <select value={eventKeeper ?? ''} onChange={(event) => setEventKeeper(Number(event.target.value) || null)}>
+              </CupSelect></label>}
+              {eventOutcome === 'saved' && <label>Opposing goalkeeper <CupSelect value={eventKeeper ?? ''} onChange={(event) => setEventKeeper(Number(event.target.value) || null)}>
                 <option value="">Choose goalkeeper</option>{eventKeepers.map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}
-              </select></label>}
-              {needsReplacementKeeper && <label>Replacement goalkeeper <select value={replacementKeeper ?? ''} onChange={(event) =>
+              </CupSelect></label>}
+              {needsReplacementKeeper && <label>Replacement goalkeeper <CupSelect value={replacementKeeper ?? ''} onChange={(event) =>
                 setReplacementKeeper(Number(event.target.value) || null)}>
                 <option value="">Choose active teammate</option>{replacementKeeperChoices.map((person) =>
                   <option value={person.id} key={person.id}>{person.name}</option>)}
-              </select></label>}
+              </CupSelect></label>}
             </div>
             <button disabled={!writesAvailable || busy || eventTeam === null || eventPlayer === null
               || (needsReplacementKeeper && replacementKeeper === null)}
@@ -2404,7 +2601,7 @@ export function CupHostDesk({ session, canMutate }: { session: CupSession | null
           {['live', 'paused'].includes(selectedMatch.state) && <div className="cup-event-form">
             <h4>Change active goalkeeper</h4>
             <div className="cup-event-controls">
-              <label>Team <select aria-label="Goalkeeper team" value={keeperTeamId ?? ''} onChange={(event) => {
+              <label>Team <CupSelect aria-label="Goalkeeper team" value={keeperTeamId ?? ''} onChange={(event) => {
                 const teamId = Number(event.target.value) || null
                 setKeeperTeamId(teamId)
                 setKeeperPlayerId(selectedMatch.participations.find((row) =>
@@ -2413,12 +2610,12 @@ export function CupHostDesk({ session, canMutate }: { session: CupSession | null
               }}><option value="">Choose team</option>
                 {[selectedMatch.home_team, selectedMatch.away_team].filter((row): row is Team => row !== null)
                   .map((side) => <option key={side.id} value={side.id}>{side.name}</option>)}
-              </select></label>
-              <label>Active goalkeeper <select aria-label="Active goalkeeper" value={keeperPlayerId ?? ''} onChange={(event) =>
+              </CupSelect></label>
+              <label>Active goalkeeper <CupSelect aria-label="Active goalkeeper" value={keeperPlayerId ?? ''} onChange={(event) =>
                 setKeeperPlayerId(Number(event.target.value) || null)}>
                 <option value="">Choose active player</option>{keeperChoices.map((person) =>
                   <option value={person.id} key={person.id}>{person.name}</option>)}
-              </select></label>
+              </CupSelect></label>
               <button className="secondary" disabled={!writesAvailable || busy || keeperTeamId === null
                 || keeperPlayerId === null
                 || selectedMatch.participations.some((row) => row.team_id === keeperTeamId
@@ -2434,8 +2631,7 @@ export function CupHostDesk({ session, canMutate }: { session: CupSession | null
           </div>}
           {selectedMatch.stage !== 'league' && selectedMatch.state === 'scheduled' && <div className="cup-event-form">
             <h4>Reschedule this playoff</h4>
-            <label>New kickoff <input type="datetime-local" value={rescheduledKickoff}
-              onChange={(event) => setRescheduledKickoff(event.target.value)} /></label>
+            <CupDateTime label="New kickoff" value={rescheduledKickoff} onChange={setRescheduledKickoff} />
             <button className="secondary" disabled={!writesAvailable || busy || !rescheduledKickoff}
               onClick={() => void send(`/api/cup/host/matches/${selectedMatch.id}/reschedule`, {
                 kickoff: new Date(rescheduledKickoff).toISOString(),
@@ -2461,11 +2657,11 @@ export function CupHostDesk({ session, canMutate }: { session: CupSession | null
               }}>Extra time + penalties</button>
             </div>
             <label>Penalty taker rotation
-              <select aria-label="Penalty taker rotation" value={shootoutTakerRule}
+              <CupSelect aria-label="Penalty taker rotation" value={shootoutTakerRule}
                 onChange={(event) => setShootoutTakerRule(event.target.value)}>
                 <option value="rotate_active_players">Every eligible squad player kicks before anyone repeats; team totals may differ</option>
                 <option value="equal_players_only">Require equal eligible squad counts; rotate takers each round</option>
-              </select>
+              </CupSelect>
             </label>
           </div>}
           {['scheduled', 'draft'].includes(selectedMatch.state) &&
@@ -2546,7 +2742,7 @@ export function CupHostDesk({ session, canMutate }: { session: CupSession | null
         <summary>Host activity & undo</summary>
         <p>Undo previews include later active cup commands and reverse confirmed cascades in dependency order. Undo entries are preserved but cannot themselves be undone. Auction actions are not included.</p>
         {history.length ? <ol className="cup-history">{[...history].reverse().map((entry) => <li key={entry.id}>
-          <span><strong>{entry.action.replace(/_/g, ' ')}</strong><small>{new Date(entry.created_at).toLocaleString()} · {entry.match_id ? `Match ${entry.match_id}` : 'Tournament'}</small></span>
+          <span><strong>{entry.action.replace(/_/g, ' ')}</strong><small>{new Date(entry.created_at).toLocaleString(undefined, { hour12: true })} · {entry.match_id ? `Match ${entry.match_id}` : 'Tournament'}</small></span>
           <button className="secondary" disabled={!writesAvailable || busy || entry.undone || entry.action === 'undo'} onClick={() => void undo(entry.id)}>
             {entry.action === 'undo' ? 'Undo record' : entry.undone ? 'Undone' : 'Undo'}
           </button>

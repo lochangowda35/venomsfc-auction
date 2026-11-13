@@ -382,6 +382,31 @@
 .cup-host-desk label { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; color: var(--cup-muted); font-size: 9px; font-weight: 700; }
 .cup-host-desk input, .cup-host-desk select { width: 100%; min-height: 42px; padding: 8px 10px; border: 1px solid var(--cup-line); border-radius: 5px; background: #0b1927; color: var(--cup-text); font-size: 11px; }
 .cup-host-desk select[multiple] { min-height: 95px; }
+.cup-site .cup-host-desk select { color-scheme: dark; appearance: none; padding-right: 36px; border-radius: 9px; background: #112a3e url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='m4 6 4 4 4-4' fill='none' stroke='%2379d6ff' stroke-width='2'/%3E%3C/svg%3E") no-repeat right 12px center; }
+.cup-tournament-removal { margin: 20px 0; }
+.cup-tournament-removal h2 { margin: 0 0 10px; font-size: 22px; }
+.cup-tournament-removal p { font-size: 14px; line-height: 1.6; }
+.cup-tournament-removal button { min-height: 44px; padding: 10px 14px; border: 1px solid var(--cup-line); border-radius: 8px; background: #112a3e; color: var(--cup-text); font: inherit; }
+.cup-archived-tournaments { margin: 14px 0; padding: 8px 12px; border: 1px solid var(--cup-line); border-radius: 8px; font-size: 14px; }
+.cup-archived-tournaments summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; color: var(--cup-lime); }
+.cup-archived-tournaments ul { display: grid; gap: 12px; }
+.cup-archived-tournaments a { text-decoration: underline; text-underline-offset: 3px; }
+.cup-header:has(> .cup-alert) { flex-wrap: wrap; }
+.cup-header > .cup-alert { flex-basis: 100%; margin: 0; }
+.cup-select-menu { position: fixed; z-index: 10000; overflow-y: auto; overscroll-behavior: contain; box-sizing: border-box; padding: 5px; border: 1px solid #79d6ff80; border-radius: 10px; background: #112a3e; color: #f5faff; box-shadow: 0 12px 36px #000b; font: 14px Montserrat, sans-serif; color-scheme: dark; }
+.cup-select-menu [role="option"] { min-height: 44px; padding: 10px; display: flex; justify-content: space-between; align-items: center; gap: 12px; box-sizing: border-box; border-radius: 5px; cursor: pointer; overflow-wrap: anywhere; }
+.cup-select-menu [role="option"][data-highlighted="true"] { background: #23465d; }
+.cup-select-menu [role="option"][aria-selected="true"] { color: #79d6ff; font-weight: 800; }
+.cup-select-menu [role="option"][aria-disabled="true"] { opacity: .45; cursor: not-allowed; }
+.cup-site .cup-host-desk input[type="checkbox"] { width: 22px; min-width: 22px; height: 22px; min-height: 22px; margin: 0; padding: 0; accent-color: #79d6ff; }
+.cup-site .cup-host-desk .cup-check { display: flex; flex-direction: row; align-items: center; gap: 12px; min-height: 44px; }
+.cup-historical-entry { padding: 12px; border: 1px solid var(--cup-line); border-radius: 8px; background: #112a3e; }
+.cup-historical-entry small { display: block; margin-top: 5px; color: var(--cup-muted); font-weight: 400; line-height: 1.5; }
+.cup-datetime { display: grid; grid-template-columns: minmax(0, 2fr) repeat(3, minmax(0, 1fr)); gap: 8px; min-width: 0; padding: 8px 0; margin: 8px 0; border: 0; }
+.cup-datetime legend { color: var(--cup-muted); font-size: 14px; font-weight: 700; }
+.cup-datetime > label { min-width: 0; }
+.cup-site .cup-host-desk .cup-datetime input, .cup-site .cup-host-desk .cup-datetime select { min-width: 0; width: 100%; padding-left: 8px; padding-right: 22px; background-position: right 4px center; box-sizing: border-box; }
+@media (max-width: 560px) { .cup-datetime { grid-template-columns: repeat(3, minmax(0, 1fr)); } .cup-datetime > label:first-of-type { grid-column: 1 / -1; } }
 .cup-host-select { max-width: 480px; }
 .cup-host-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
 .cup-roster-editor { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--cup-line); }
@@ -579,6 +604,10 @@
 .cup-spotlight-name { min-width: 0; font-size: 13px; }
 .cup-spotlight-name b { display: block; overflow-wrap: anywhere; }
 .cup-spotlight-name small { display: block; margin-top: 4px; color: var(--cup-muted); font-size: 11px; }
+.cup-spotlight-card header > span { color: var(--cup-muted); font-size: 11px; }
+.cup-spotlight-total { margin-left: auto; color: var(--cup-gold); font-size: 22px; white-space: nowrap; }
+.cup-spotlight-total small { display: block; font-size: 11px; font-weight: 500; }
+.cup-spotlight-card .cup-leader-player { width: 100%; min-width: 0; }
 .cup-host-score .cup-clock-status { margin: 0; }
 .cup-host-event-glance { padding: 8px 10px; border: 1px solid var(--cup-line); border-radius: 6px; background: #ffffff05; }
 .cup-host-event-glance h4 { margin: 0 0 6px; font-size: 11px; color: #eef7f2; }

@@ -307,7 +307,7 @@ def _require_version(tournament, expected):
             409,
         )
     if _tournament_paused(tournament) and request.endpoint not in {
-        "cup.control_tournament", "cup.undo_last_action",
+        "cup.control_tournament", "cup.undo_last_action", "cup.archive_tournament",
     }:
         raise CupError("The tournament is paused. Resume it before changing tournament or match data.")
 
@@ -911,14 +911,18 @@ def public_tournament(tournament_id):
 
 @cup_api.get("/matches/<int:match_id>")
 def public_match(match_id):
-    return jsonify(match=_match_dict(_match(match_id)))
+    match = _match(match_id)
+    _tournament(match.tournament_id)
+    return jsonify(match=_match_dict(match))
 
 
 @cup_api.get("/players")
 def public_players():
     players = db.session.scalars(select(Player).where(Player.active.is_(True)).order_by(Player.name, Player.id)).all()
     memberships = db.session.scalars(
-        select(CupRosterMembership).where(CupRosterMembership.active.is_(True))
+        select(CupRosterMembership).join(CupTournament).where(
+            CupRosterMembership.active.is_(True), CupTournament.lifecycle != "archived",
+        )
     ).all()
     teams = {team.id: team for team in db.session.scalars(select(Team)).all()}
     return jsonify(players=[
@@ -940,14 +944,16 @@ def public_player(player_id):
     if player is None or not player.active:
         raise CupError("Player not found.", 404)
     memberships = db.session.scalars(
-        select(CupRosterMembership).where(
+        select(CupRosterMembership).join(CupTournament).where(
             CupRosterMembership.player_id == player_id,
             CupRosterMembership.active.is_(True),
+            CupTournament.lifecycle != "archived",
         )
     ).all()
     team_map = {team.id: team for team in db.session.scalars(select(Team)).all()}
     events = db.session.scalars(
-        select(CupMatchEvent).where(
+        select(CupMatchEvent).join(CupMatch).join(CupTournament).where(
+            CupTournament.lifecycle != "archived",
             or_(
                 CupMatchEvent.player_id == player_id,
                 CupMatchEvent.assist_player_id == player_id,
@@ -963,10 +969,11 @@ def public_player(player_id):
          "second_yellow_reds": 0},
     )
     participations = db.session.scalars(
-        select(CupParticipation).join(CupMatch).where(
+        select(CupParticipation).join(CupMatch).join(CupTournament).where(
             CupParticipation.player_id == player_id,
             CupParticipation.status.in_(["starter", "entered", "substituted", "dismissed"]),
             CupMatch.state.in_(["live", "paused", "review", "finalized"]),
+            CupTournament.lifecycle != "archived",
         )
     ).all()
     appearances = {
@@ -993,17 +1000,19 @@ def public_team(team_id):
     if team is None:
         raise CupError("Team not found.", 404)
     memberships = db.session.scalars(
-        select(CupRosterMembership).where(
+        select(CupRosterMembership).join(CupTournament).where(
             CupRosterMembership.team_id == team_id,
             CupRosterMembership.active.is_(True),
+            CupTournament.lifecycle != "archived",
         )
     ).all()
     player_map = {player.id: player for player in db.session.scalars(select(Player)).all()}
     captain_ids = _auction_captain_ids({team.id: team}, player_map, memberships)
     match_rows = db.session.scalars(
-        select(CupMatch).where(
+        select(CupMatch).join(CupTournament).where(
             (CupMatch.home_team_id == team_id) | (CupMatch.away_team_id == team_id),
             CupMatch.state != "archived",
+            CupTournament.lifecycle != "archived",
         ).order_by(CupMatch.match_order)
     ).all()
     tournament = _tournament(match_rows[0].tournament_id) if match_rows else None
@@ -1083,6 +1092,68 @@ def _mutating_request(action):
 
 def _recheck_after_lock(request_id, action, data):
     return _existing_request(request_id, action, data)
+
+
+@cup_api.get("/host/archived-tournaments")
+@host_required
+def archived_tournaments():
+    rows = db.session.scalars(select(CupTournament).where(
+        CupTournament.lifecycle == "archived",
+    ).order_by(CupTournament.id.desc())).all()
+    return jsonify(tournaments=[{
+        "id": row.id, "name": row.name, "edition": row.edition,
+    } for row in rows])
+
+
+@cup_api.get("/host/<int:tournament_id>/removal")
+@host_required
+def tournament_removal_status(tournament_id):
+    tournament = _tournament(tournament_id, include_archived=True)
+    archive_id = db.session.scalar(select(CupAudit.id).where(
+        CupAudit.tournament_id == tournament.id,
+        CupAudit.action == "tournament_archive", CupAudit.undone_by_id.is_(None),
+    ).order_by(CupAudit.id.desc()).limit(1))
+    active_match_id = db.session.scalar(select(CupMatch.id).where(
+        CupMatch.tournament_id == tournament.id,
+        CupMatch.state.in_(["live", "paused", "review"]),
+    ).limit(1))
+    return jsonify(tournament={
+        "id": tournament.id, "name": tournament.name, "version": tournament.version,
+        "lifecycle": "paused" if _tournament_paused(tournament) else tournament.lifecycle,
+        "archive_audit_id": archive_id, "active_match_id": active_match_id,
+    })
+
+
+@cup_api.post("/host/<int:tournament_id>/archive")
+@host_required
+def archive_tournament(tournament_id):
+    csrf_response = _require_csrf()
+    if csrf_response is not None:
+        return csrf_response
+    data, request_id, previous = _mutating_request("tournament_archive")
+    if previous is not None:
+        return jsonify(previous)
+    tournament = _tournament(tournament_id, lock=True)
+    previous = _recheck_after_lock(request_id, "tournament_archive", data)
+    if previous is not None:
+        return jsonify(previous)
+    expected = _expected_version(data)
+    _require_version(tournament, expected)
+    active = db.session.scalar(select(CupMatch.id).where(
+        CupMatch.tournament_id == tournament.id,
+        CupMatch.state.in_(["live", "paused", "review"]),
+    ).limit(1))
+    if active is not None:
+        raise CupError("Finalize or undo the active or under-review match before removing this tournament.")
+    old = tournament.lifecycle
+    tournament.lifecycle = "archived"
+    result = _record(
+        tournament, request_id, "tournament_archive", expected,
+        {"type": "lifecycle", "tournament_id": tournament.id, "value": old},
+        {"type": "lifecycle", "tournament_id": tournament.id, "value": "archived"},
+    )
+    db.session.commit()
+    return jsonify(result)
 
 
 @cup_api.get("/host/requests/<request_id>")

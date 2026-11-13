@@ -73,6 +73,20 @@ the top of the host desk. A confirmed save is not reported as failed if the
 follow-up read times out: the saved action stays acknowledged, further changes
 are blocked, and Refresh desk reloads state without repeating the command.
 Server rejection reasons remain visible while request reconciliation completes.
+Generate fixtures while the tournament is still a draft, review their order and
+kickoff times, then confirm **Publish reviewed fixtures**. Players can see the
+complete schedule on the home page before **Start tournament** is used; publishing
+never starts a tournament or match. Wall-clock times and kickoff controls use
+12-hour AM/PM; elapsed match clocks remain unchanged.
+Home and tournament overview leader summaries show three players per category,
+with individual totals; the full Stats view retains all players and shared ranks.
+Authenticated hosts can **Remove tournament** on its tournament page. This is a
+versioned, audited archive, not permanent deletion: fixtures, events, memberships,
+history and shared auction identities remain intact. Active, paused or under-review
+matches block removal. **Removed tournaments · recovery** links to retained pages,
+where **Restore tournament** undoes the archive using the existing audited undo
+mechanism. Removed records are excluded from normal public/host discovery and
+public player/team match statistics until restored.
 As each playoff is finalized, the announcement shows the confirmed winners,
 runners-up and third place without awarding pending results. Home and tournament
 pages celebrate the finalized final winner and highlight every player tied for

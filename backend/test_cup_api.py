@@ -96,6 +96,9 @@ class CupApiTests(unittest.TestCase):
         return self.client.post(path, headers={"X-CSRF-Token": csrf}, json=body)
 
     def test_host_mutations_require_authentication_and_csrf(self):
+        self.assertEqual(self.client.post("/api/cup/host/999/archive").status_code, 401)
+        self.assertEqual(self.client.get("/api/cup/host/999/removal").status_code, 401)
+        self.assertEqual(self.client.get("/api/cup/host/archived-tournaments").status_code, 401)
         response = self.client.post("/api/cup/host/tournaments", json={
             "request_id": "create-unauth",
         })
@@ -105,6 +108,9 @@ class CupApiTests(unittest.TestCase):
             "request_id": "create-no-csrf",
         })
         self.assertEqual(response.status_code, 403)
+        self.assertEqual(self.client.post("/api/cup/host/999/archive", json={
+            "request_id": "archive-no-csrf", "expected_version": 0,
+        }).status_code, 403)
 
     def test_tournament_and_auction_sessions_are_independent(self):
         auction = self.client.get("/api/auth/session").json
@@ -966,6 +972,133 @@ class CupApiTests(unittest.TestCase):
         self.assertEqual([row.id for row in db.session.scalars(select(CupMatch).where(
             CupMatch.tournament_id == tournament_id
         ).order_by(CupMatch.match_order)).all()], original_ids)
+
+    def test_fixtures_are_generated_and_published_without_starting_the_tournament(self):
+        csrf = self.login()
+        created = self.post("/api/cup/host/tournaments", csrf, {"request_id": "prestart-create"})
+        tournament_id = created.json["tournament_id"]
+        imported = self.post(f"/api/cup/host/{tournament_id}/import-squads", csrf, {
+            "request_id": "prestart-import", "expected_version": 0,
+        })
+        generated = self.post(f"/api/cup/host/{tournament_id}/fixtures", csrf, {
+            "request_id": "prestart-generate", "expected_version": imported.json["version"],
+            "kickoff": "2026-11-14T14:30:00+00:00",
+        })
+        self.assertEqual(generated.status_code, 200, generated.json)
+        draft = self.client.get(f"/api/cup/{tournament_id}").json["tournament"]
+        self.assertEqual(draft["lifecycle"], "draft")
+        self.assertTrue(all(match["state"] == "draft" for match in draft["matches"]))
+        published = self.post(f"/api/cup/host/{tournament_id}/publish", csrf, {
+            "request_id": "prestart-publish", "expected_version": generated.json["version"],
+        })
+        self.assertEqual(published.status_code, 200, published.json)
+        anonymous = self.app.test_client()
+        public = anonymous.get(f"/api/cup/{tournament_id}").json["tournament"]
+        self.assertEqual(public["lifecycle"], "published")
+        self.assertEqual(len(public["matches"]), 10)
+        self.assertTrue(all(match["state"] == "scheduled" and not match["clock"] for match in public["matches"]))
+        self.assertEqual(anonymous.get("/api/cup?summary=1").json["tournaments"][0]["lifecycle"], "published")
+        premature = self.post(f"/api/cup/host/matches/{public['matches'][0]['id']}/clock", csrf, {
+            "request_id": "prestart-premature-kickoff", "expected_version": published.json["version"],
+            "expected_match_version": 0, "command": "kickoff",
+        })
+        self.assertEqual(premature.status_code, 409, premature.json)
+        self.assertIn("Start the tournament", premature.json["error"])
+        self.assertEqual(db.session.get(Auction, 1).state, self.auction_state)
+
+    def test_tournament_archive_preserves_records_and_is_idempotent_versioned_and_recoverable(self):
+        csrf = self.login()
+        created = self.post("/api/cup/host/tournaments", csrf, {"request_id": "archive-create"})
+        tournament_id = created.json["tournament_id"]
+        self.post(f"/api/cup/host/{tournament_id}/import-squads", csrf, {
+            "request_id": "archive-import", "expected_version": 0,
+        })
+        generated = self.post(f"/api/cup/host/{tournament_id}/fixtures", csrf, {
+            "request_id": "archive-fixtures", "expected_version": 1,
+            "kickoff": "2026-11-14T14:30:00+00:00",
+        })
+        first = db.session.scalar(select(CupMatch).where(CupMatch.tournament_id == tournament_id))
+        first.state = "finalized"
+        db.session.add(CupMatchEvent(
+            match_id=first.id, request_id="archive-goal", event_type="shot", minute=1,
+            period="first_half", team_id=first.home_team_id, player_id=self.players[0].id,
+            outcome="goal", payload={}, voided=False, created_at=datetime.now(timezone.utc),
+        ))
+        db.session.commit()
+        retained = [Auction, AuctionEvent, Team, Player, CupTeam, CupPlayer,
+                    CupMatch, CupMatchEvent, CupParticipation, CupRosterMembership]
+
+        def snapshot():
+            return {model.__tablename__: [
+                dict(row) for row in db.session.execute(model.__table__.select()).mappings()
+            ] for model in retained}
+
+        before = snapshot()
+        body = {"request_id": "archive-remove", "expected_version": generated.json["version"]}
+        removed = self.post(f"/api/cup/host/{tournament_id}/archive", csrf, body)
+        self.assertEqual(removed.status_code, 200, removed.json)
+        replay = self.post(f"/api/cup/host/{tournament_id}/archive", csrf, body)
+        self.assertEqual(replay.json, removed.json)
+        self.assertEqual(snapshot(), before)
+        self.assertEqual(self.client.get("/api/cup?summary=1").json["tournaments"], [])
+        self.assertEqual(self.client.get("/api/cup").json["tournaments"], [])
+        self.assertEqual(self.client.get(f"/api/cup/{tournament_id}").status_code, 404)
+        self.assertEqual(self.client.get(f"/api/cup/matches/{first.id}").status_code, 404)
+        self.assertEqual(self.client.get(f"/api/cup/teams/{first.home_team_id}").json["team"]["matches"], [])
+        self.assertEqual(self.client.get(f"/api/cup/players/{self.players[0].id}").json["player"]["statistics"]["goals"], 0)
+        archived = self.client.get("/api/cup/host/archived-tournaments").json["tournaments"]
+        self.assertEqual([row["id"] for row in archived], [tournament_id])
+        status = self.client.get(f"/api/cup/host/{tournament_id}/removal").json["tournament"]
+        self.assertEqual(status["lifecycle"], "archived")
+        self.assertIsNotNone(status["archive_audit_id"])
+        self.assertEqual(self.client.get(f"/api/cup/host/{tournament_id}/history").status_code, 200)
+        target = status["archive_audit_id"]
+        stale = self.post(f"/api/cup/host/{tournament_id}/undo", csrf, {
+            "request_id": "archive-stale-undo", "expected_version": generated.json["version"],
+            "target_audit_id": target, "cascade": False,
+        })
+        self.assertEqual(stale.status_code, 409, stale.json)
+        restored = self.post(f"/api/cup/host/{tournament_id}/undo", csrf, {
+            "request_id": "archive-restore", "expected_version": removed.json["version"],
+            "target_audit_id": target, "cascade": False,
+        })
+        self.assertEqual(restored.status_code, 200, restored.json)
+        self.assertEqual(snapshot(), before)
+        self.assertEqual(self.client.get(f"/api/cup/{tournament_id}").status_code, 200)
+        self.assertEqual(self.client.get(f"/api/cup/players/{self.players[0].id}").json["player"]["statistics"]["goals"], 1)
+        self.assertEqual(self.client.get("/api/cup/host/archived-tournaments").json["tournaments"], [])
+        self.assertEqual(self.post(f"/api/cup/host/{tournament_id}/archive", csrf, body).json, removed.json)
+        self.assertEqual(db.session.get(CupTournament, tournament_id).lifecycle, "draft")
+        self.assertEqual(len(db.session.scalars(select(CupAudit).where(
+            CupAudit.action == "tournament_archive",
+        )).all()), 1)
+
+    def test_tournament_archive_rejects_active_paused_and_under_review_matches(self):
+        csrf = self.login()
+        for state in ("live", "paused", "review"):
+            with self.subTest(state=state):
+                created = self.post("/api/cup/host/tournaments", csrf, {
+                    "request_id": f"archive-guard-create-{state}",
+                })
+                tournament_id = created.json["tournament_id"]
+                tournament = db.session.get(CupTournament, tournament_id)
+                tournament.lifecycle = "running"
+                tournament.settings = {**tournament.settings, "tournament_paused": state == "paused"}
+                match = CupMatch(
+                    tournament_id=tournament_id, stage="league", home_team_id=self.teams[0].id,
+                    away_team_id=self.teams[1].id, match_order=1, state=state,
+                    version=0, settings={}, clock={"period": "first_half", "elapsed_seconds": 30},
+                )
+                db.session.add(match)
+                db.session.commit()
+                response = self.post(f"/api/cup/host/{tournament_id}/archive", csrf, {
+                    "request_id": f"archive-guard-remove-{state}", "expected_version": 0,
+                })
+                self.assertEqual(response.status_code, 409, response.json)
+                self.assertIn("active or under-review", response.json["error"])
+                self.assertEqual(tournament.lifecycle, "running")
+                self.assertEqual(tournament.version, 0)
+                self.assertEqual(match.state, state)
 
     def test_fixture_refresh_batches_match_data_and_offers_a_lightweight_tournament_list(self):
         csrf = self.login()
