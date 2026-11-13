@@ -14,12 +14,21 @@ With the development servers running:
 | Page | Local URL |
 | --- | --- |
 | Host login, setup, and auction controls | http://127.0.0.1:5173/host |
+| Separate tournament host login and controls | http://127.0.0.1:5173/tournament-host |
 | TV display (host password required, read-only) | http://127.0.0.1:5173/display |
-| Mobile/spectator view (read-only) | http://127.0.0.1:5173/ |
+| Venoms FC club home | http://127.0.0.1:5173/ |
+| Internal Cup tournaments, fixtures, and tables | http://127.0.0.1:5173/tournaments |
+| Shared player directory | http://127.0.0.1:5173/players |
+| Auction archive / spectator view (read-only) | http://127.0.0.1:5173/auction |
+| Legacy auction spectator route (read-only) | http://127.0.0.1:5173/spectate |
 
-Use the **host password** you configured, not a PostgreSQL password. There is no
-username or public signup. Spectators cannot bid, even if a host session exists
-in the same browser. The root URL always opens the public spectator view.
+Use the **host password** you configured, not a PostgreSQL password. The auction
+and tournament host logins use the same password but separate sessions; signing
+in or out of either does not sign in or out of the other. There is no
+username or public signup. The club website and Internal Cup pages are public
+and read-only. Auction spectators cannot bid, even if a host session exists in
+the same browser. The root URL opens the club home; `/auction` opens the
+preserved auction spectator experience.
 Both `/host` and `/display` require a host session before showing their content;
 visiting `/display` while signed out prompts for login and returns to the TV view.
 Signing out locks the private windows on their next access check.
@@ -36,6 +45,83 @@ top switch between teams. Clicking a player opens their details and bid history.
 These loopback URLs work only on this computer; viewing on another physical phone
 or TV over Wi-Fi needs a separately reviewed LAN configuration. For the public
 site, see [Going live](#going-live-on-wwwvenomsfcin).
+
+The Internal Cup has its own tournament identities, roster, fixture,
+match-event and audit records. Importing auction rosters copies player/team
+profiles and assignments into the cup; edits to Cup identities do not alter
+auction profiles or history. Cup host actions have separate undo/audit
+controls. Recorded events can be corrected directly, and omitted events can be
+added to played matches. For safety, omitted events must follow all previously
+recorded match events, and card/substitution corrections require undoing later
+dependent match actions first. League score changes require undoing dependent
+playoff qualification. Pending league fixtures can be reordered and rescheduled
+after the tournament starts; started and completed fixtures retain their positions.
+The host can start a ready fixture out of order or before its published time,
+provided the pitch is free and both lineups are ready. Scheduled rest intervals
+do not block an actual kickoff; the host decides when to start. Playoffs require completed league qualification. Upcoming
+playoffs can be rescheduled, subject to the preceding and following fixture
+intervals. Cup identities are shared
+between tournaments: a profile change or its undo is blocked when another
+tournament has used that identity, rather than altering its history.
+Once all ten league results are finalized, the host and public pages announce
+the final and third-place participants (or explicitly await a host tie decision).
+For teams level on points, goal difference and goals scored, the host selects
+each tied place and confirms the audited ranking before adding playoff fixtures.
+The host can then add both playoff fixtures from the match desk.
+As each playoff is finalized, the announcement shows the confirmed winners,
+runners-up and third place without awarding pending results. Home and tournament
+pages celebrate the finalized final winner and highlight every player tied for
+the most goals or assists. Shootout winners are respected, kicks stay out of player
+goal totals, and corrected or undone results update these displays automatically.
+Tournament Pause freezes a live clock and blocks match changes until Resume;
+resuming the tournament leaves the match clock paused for an explicit restart.
+Finish tournament is a separate audited action, available only after all ten
+league fixtures and both playoffs are finalized. Existing completed cups remain completed.
+Penalty takers come from each team's full active assigned squad, excluding
+dismissed players, without changing its playing lineup. The host may finish a
+shootout at any attempt count: the leading team wins, or at a tied score the
+host must explicitly award a winner. Actual kicks stay unchanged and public
+results identify the host decision. Undo the shootout finish (and dependent
+actions) before correcting kicks or reopening the shootout. League penalty
+winners receive three points and losers zero; regulation goals remain unchanged.
+Tournament photos and logos can be uploaded to separate Cup-only storage;
+profile changes remain audited and undoable. The application database and
+production deployment use PostgreSQL.
+The home page shows the current Cup squads, and shows live or paused matches
+with the latest completed result in the Matchday section once the tournament starts.
+Penalty result cards name the winner and retain the actual shootout score;
+the match centre retains details of any explicit host decision. Published upcoming
+fixtures are also shown on the home page. Captains appear first in their squads.
+Public leaderboards show goals, assists, saves,
+shots on target, own goals and cards; player profiles retain the full recorded
+statistics. Squad captain badges reflect the recorded auction captain only
+while that player remains in that team's Cup roster; changing the roster does
+not assign a new captain.
+SQLite is used only by the isolated copied-data Cup preview and its deterministic
+browser simulation; SQLite results do not validate PostgreSQL locking or
+concurrent writes. The local desktop PostgreSQL Cup tables use a separate
+`cup_schema_version` marker; the auction's `alembic_version` remains untouched.
+Do not run the Alembic upgrade chain against that database to update these Cup
+tables. Future Cup schema changes need a separately reviewed migration. The
+loopback PostgreSQL preview disables auction mutations to protect the original
+auction while allowing independent tournament changes.
+
+To run a copied-data Cup preview without connecting to PostgreSQL, start from
+the repository root:
+
+```powershell
+backend\.venv\Scripts\python.exe backend\dev_preview.py
+```
+
+The runner creates a new ignored SQLite store and media copy, prints a
+loopback-only URL and a path to its private host-password file, and does not
+copy auction prices/history or credentials. Use the printed password only on
+the local host page. For the API-driven full-tournament browser simulation,
+start a separate fresh store with `backend\.venv\Scripts\python.exe
+backend\dev_preview.py --simulation`; its controllable clock is available only
+on that loopback test server. Neither runner connects to the configured
+PostgreSQL database, and neither preview is a substitute for PostgreSQL or
+deployment validation.
 
 ## Going live on www.venomsfc.in
 
@@ -414,6 +500,17 @@ automation at a live auction.
 From `frontend`, `npm run test:e2e` runs mocked browser tests without changing the
 database. On Windows it uses installed Microsoft Edge; on other systems install
 Playwright's Chromium with `npx playwright install chromium`.
+
+The Cup lineup and host-recovery browser regressions use an in-memory synthetic
+database, never the real tournament. They exercise the phone host desk against
+the actual Flask API, including a request canceled before its delayed original
+POST arrives, match event undo, active-match logout/relogin, and simulated clock
+transitions. Build the frontend, then run
+`.\.venv\Scripts\python.exe backend\lineup_browser_fixture.py` from the repository
+root. In another terminal, from `frontend`, set both `AUCTION_E2E_URL` and
+`CUP_LINEUP_E2E_URL` to `http://127.0.0.1:60574`, then run
+`npx.cmd playwright test e2e/cup-lineup-real.spec.ts e2e/cup-real-server.spec.ts`.
+Restart the fixture server for a fresh test state.
 
 To check the running UI without modifying auction records, set
 `AUCTION_E2E_URL=http://127.0.0.1:5000` and `AUCTION_E2E_PRESENTATION=1` in the

@@ -107,7 +107,7 @@ test('isolated PostgreSQL: unlimited squads, manual results, edits, completion a
   expect(completed.teams[1].budget).toBe(860)
 
   // Click the logo/card, not just its text, in host, TV and mobile spectator.
-  for (const [path, width, height] of [['/host', 1280, 900], ['/display', 1920, 1080], ['/', 375, 812]] as const) {
+  for (const [path, width, height] of [['/host', 1280, 900], ['/display', 1920, 1080], ['/spectate', 375, 812]] as const) {
     const view = path === '/host' ? page : await context.newPage()
     await view.setViewportSize({ width, height })
     await view.goto(path)

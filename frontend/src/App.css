@@ -113,6 +113,7 @@ button.theme-toggle { font-size: 20px; padding: 8px; width: 44px; border-radius:
 button.text-button { background: none; color: var(--accent); padding: 6px 8px; border-color: transparent; font-size: 13px; }
 button.danger { color: var(--danger); }
 .page-shell { max-width: 1440px; margin: auto; padding: 0 32px 50px; }
+.auction-preview-copy-notice { margin: 12px 0; padding: 11px 14px; border: 1px solid #d6af5470; border-left: 3px solid #d6af54; background: #d6af5410; color: #f0d48a; font-size: 11px; line-height: 1.6; }
 .live-strip { display: flex; align-items: center; justify-content: space-between; padding: 12px 0; border-top: 1px solid var(--border); font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; gap: 16px; }
 .connection { display: flex; align-items: center; gap: 8px; }
 .connection i { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }

@@ -20,7 +20,7 @@ test('official PostgreSQL instance: branding, fixed teams, protected TV popup an
     expect(response.headers()['content-type']).toContain('image/jpeg')
     expect((await response.body()).length).toBeGreaterThan(1000)
   }
-  await page.goto('/')
+  await page.goto('/spectate')
   await expect(page.locator('.team-card')).toHaveCount(5)
   await expect(page.getByRole('link', { name: 'TV display', exact: true })).toHaveCount(0)
   expect(await page.locator('.official-banner img').evaluate((image: HTMLImageElement) =>
@@ -51,7 +51,7 @@ test('official PostgreSQL instance: branding, fixed teams, protected TV popup an
   await expect(tv.locator('.team-card')).toHaveCount(5)
   await expect(tv.locator('.host-controls')).toHaveCount(0)
   const spectator = await context.newPage()
-  await spectator.goto('/')
+  await spectator.goto('/spectate')
   await expect(spectator.locator('.team-card')).toHaveCount(5)
   await expect(spectator.locator('.setup-launch, .host-controls')).toHaveCount(0)
   await desk.locator('.view-switch summary').click()

@@ -1,4 +1,5 @@
 import os
+import re
 from datetime import timedelta
 from pathlib import Path
 
@@ -16,6 +17,7 @@ from auction import auction_api, register_maintenance
 from media import media
 from demo_seed import register_demo_seed
 from branding import register_branding
+from cup import register_cup
 import models
 
 
@@ -32,6 +34,7 @@ def create_app(test_config=None):
         PERMANENT_SESSION_LIFETIME=timedelta(hours=8),
         SESSION_REFRESH_EACH_REQUEST=False,
         UPLOAD_FOLDER=os.environ.get("UPLOAD_FOLDER") or str(Path(__file__).parent / "uploads"),
+        CUP_UPLOAD_FOLDER=os.environ.get("CUP_UPLOAD_FOLDER") or str(Path(__file__).parent / "cup_uploads"),
         BACKUP_FOLDER=os.environ.get("BACKUP_FOLDER"),
         ALLOW_MEDIA_RESTORE=os.environ.get("ALLOW_MEDIA_RESTORE") == "1",
         MAX_CONTENT_LENGTH=6 * 1024 * 1024,
@@ -72,6 +75,11 @@ def create_app(test_config=None):
     register_demo_seed(app)
     register_maintenance(app)
     register_branding(app)
+    register_cup(app)
+    from cup_auth import cup_auth
+    app.register_blueprint(cup_auth)
+    from cup_media import cup_media
+    app.register_blueprint(cup_media)
 
     @app.errorhandler(413)
     def too_large(error):
@@ -80,6 +88,10 @@ def create_app(test_config=None):
     @app.get("/api/health")
     def health():
         return jsonify(status="ok", message="Hello from the Venoms FC Flask backend!")
+
+    @app.get("/api/preview-info")
+    def preview_info():
+        return jsonify(label=app.config.get("PREVIEW_DATA_LABEL"))
 
     @app.get("/api/ready")
     def ready():
@@ -98,15 +110,29 @@ def create_app(test_config=None):
         response.headers["Cache-Control"] = "no-store"
         return response
 
-    @app.get("/")
     @app.get("/host")
     @app.get("/display")
     @app.get("/spectate")
+    @app.get("/auction")
+    @app.get("/")
     def frontend_page():
         if request.path == "/display" and current_host_session() is None:
             response = redirect("/host?next=display")
             response.headers["Cache-Control"] = "no-store"
             return response
+        response = send_from_directory(
+            Path(__file__).parent.parent / "frontend" / "dist", "index.html"
+        )
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @app.get("/<path:frontend_route>")
+    def website_page(frontend_route):
+        route = frontend_route.strip("/")
+        if route not in {"tournaments", "players", "tournament-host"} and not re.fullmatch(
+            r"(tournaments|players|matches|teams)/[1-9][0-9]*", route
+        ):
+            return jsonify(error="Page not found."), 404
         response = send_from_directory(
             Path(__file__).parent.parent / "frontend" / "dist", "index.html"
         )

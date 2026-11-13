@@ -11,6 +11,7 @@ import type { SaveProfile } from './Setup'
 import type { Player, Team } from './types'
 import { useAuction } from './useAuction'
 import { AuctionBanner, TvGuide } from './Branding'
+import Website from './Website'
 import { unlockSound } from './sound'
 import { usePreloadImages } from './usePreload'
 import venomsLogo from './assets/venoms-fc.png'
@@ -23,15 +24,25 @@ function teamFromUrl(): number | null {
 
 type Confirmation = { title: string; body: string; confirm: string; perform: () => void; requireText?: string; danger?: boolean }
 
-function App() {
+function AuctionApp() {
   const path = window.location.pathname.replace(/\/+$/, '') || '/'
   const host = path === '/host'
   const tv = path === '/display'
   const privateView = host || tv
   const auction = useAuction(host, tv)
   const { state, connected, busy, canMutate, session } = auction
+
+  useEffect(() => {
+    if (tv || (privateView && session?.authenticated !== true)) return
+    let active = true
+    void request<{ label: string | null }>('/api/preview-info')
+      .then((response) => { if (active && response.label) setPreviewDataLabel(response.label) })
+      .catch(() => undefined)
+    return () => { active = false }
+  }, [privateView, session?.authenticated, tv])
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null)
   const [playerId, setPlayerId] = useState<number | null>(null)
+  const [previewDataLabel, setPreviewDataLabel] = useState('')
   const viewMenu = useRef<HTMLDetailsElement>(null)
   const tvSide = useRef<HTMLElement>(null)
   const tvReady = tv && state !== null && session?.authenticated === true
@@ -167,14 +178,14 @@ function App() {
 
   return <div className={`app ${tv ? 'tv-view' : ''} ${host ? 'host-view' : 'spectator-view'} ${light ? 'light-theme' : ''}`}>
     <header className="site-header">
-      <a className="brand" href="/" aria-label="Venoms FC spectator home"><img className="official-crest" src={venomsLogo} alt="Official Venoms FC logo" /><span>VENOMS <b>FC</b><small><span>INTERNAL CUP ·</span> <span>THIRD EDITION</span></small></span></a>
+      <a className="brand" href="/spectate" aria-label="Venoms FC auction spectator home"><img className="official-crest" src={venomsLogo} alt="Official Venoms FC logo" /><span>VENOMS <b>FC</b><small><span>INTERNAL CUP ·</span> <span>THIRD EDITION</span></small></span></a>
       <div className="header-actions">
         <button className="theme-toggle" onClick={toggleTheme} aria-label={`Switch to ${light ? 'dark' : 'light'} theme`} title={`Switch to ${light ? 'dark' : 'light'} theme`}>{light ? '◐' : '◑'}</button>
         <details className="view-switch" ref={viewMenu}>
           <summary><span className="view-switch-icon" aria-hidden="true">☰</span><span>{host ? 'Host' : tv ? 'TV' : 'Watch'}</span><span className="view-switch-caret" aria-hidden="true" /></summary>
           <nav aria-label="View">
             <span className="menu-label">Choose your view</span>
-            <a href="/" aria-current={!host && !tv ? 'page' : undefined}>Spectator <small>Public · read-only</small></a>
+            <a href="/spectate" aria-current={!host && !tv ? 'page' : undefined}>Auction spectator <small>Public · read-only</small></a>
             {privateView && session?.authenticated
               ? <><a href="/host" aria-current={host ? 'page' : undefined}>Host desk <small>Private controls</small></a>
                 {tv && <a href="/display" aria-current="page">TV display <small>Private · read-only</small></a>}</>
@@ -188,6 +199,7 @@ function App() {
       </div>
     </header>
     <main className="page-shell">
+      {previewDataLabel && <div className="auction-preview-copy-notice" role="note">{previewDataLabel}</div>}
       {completedSpectator && <div className="edition-complete-banner" role="status">
         <span className="edition-complete-icon" aria-hidden="true">🏆</span>
         <p><strong>Edition 3 auction is complete!</strong> <span>Thanks for following along. Every squad is locked in, so explore the final rosters below.</span></p>
@@ -280,6 +292,13 @@ function App() {
       requireText={confirmation.requireText} danger={confirmation.danger}
       onConfirm={confirmation.perform}><p>{confirmation.body}</p></ConfirmDialog>}
   </div>
+}
+
+function App() {
+  const path = window.location.pathname.replace(/\/+$/, '') || '/'
+  return ['/auction', '/spectate', '/host', '/display'].includes(path)
+    ? <AuctionApp />
+    : <Website />
 }
 
 export default App

@@ -24,7 +24,7 @@ test('spectator and TV never expose mutations, even with an authenticated host c
     if (path.endsWith('/session')) return route.fulfill({ json: { authenticated: true, csrf_token: 'fixture' } })
     return route.fulfill({ json: state })
   })
-  for (const path of ['/', '/display']) {
+  for (const path of ['/spectate', '/display']) {
     await page.goto(path)
     await expect(page.getByRole('heading', { name: 'Demo Captain', exact: true, level: 1 })).toBeVisible()
     await expect(page.getByRole('button', { name: /SOLD|Undo|Pause|Bring to floor|Add player|Add team|Enter host/ })).toHaveCount(0)
@@ -135,7 +135,7 @@ test('mobile spectator has no horizontal overflow and broken images have a fallb
     state.players[0].name = 'Very long player name to exercise small-screen layouts'
     return route.fulfill({ json: state })
   })
-  await page.goto('/')
+  await page.goto('/spectate')
   await expect(page.getByRole('heading', { name: /Very long player name/ }).first()).toBeVisible()
   await expect(page.getByLabel(/image unavailable/).first()).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
@@ -238,7 +238,7 @@ test('spectators can open a read-only team page with live squad details', async 
     if (path.endsWith('/session')) return route.fulfill({ json: { authenticated: false, csrf_token: 'fixture' } })
     return route.fulfill({ json: state })
   })
-  await page.goto('/')
+  await page.goto('/spectate')
   const open = page.getByRole('button', { name: 'View Club 2 squad and details' })
   await open.click()
   await expect(page).toHaveURL(/\?team=2$/)
@@ -254,9 +254,9 @@ test('spectators can open a read-only team page with live squad details', async 
   await expect(page).toHaveURL(/\?team=3$/)
   await expect(page.getByRole('dialog').getByText(/No signings yet/)).toBeVisible()
   await page.keyboard.press('Escape')
-  await expect(page).toHaveURL(/\/$/)
+  await expect(page).toHaveURL(/\/spectate$/)
   await expect(page.getByRole('button', { name: 'View Club 3 squad and details' })).toBeFocused()
-  await page.goto('/?team=2')
+  await page.goto('/spectate?team=2')
   await expect(page.getByRole('heading', { name: 'Club 2', level: 1 })).toBeVisible()
   await page.getByRole('button', { name: /All teams/ }).click()
   await expect(page.locator('.team-card')).toHaveCount(5)
@@ -290,7 +290,7 @@ test('sets show every player, open set sits below the stage, and sold cards reve
     if (path.endsWith('/session')) return route.fulfill({ json: { authenticated: true, csrf_token: 'fixture' } })
     return route.fulfill({ json: state })
   })
-  await page.goto('/')
+  await page.goto('/spectate')
   const board = page.locator('.sets-board')
   for (const title of ['Set 1 · Goalkeepers', 'Set 2 · Defenders', 'Set 3 · Midfielders', 'Set 4 · Strikers']) {
     await expect(board.getByRole('heading', { name: title })).toBeVisible()
@@ -392,7 +392,7 @@ test('TV uses the full width with Squad Watch beside the live auction, and a new
   await expect(passed).toHaveCount(0, { timeout: 7000 })
 
   await page.setViewportSize({ width: 390, height: 844 })
-  await page.goto('/')
+  await page.goto('/spectate')
   await page.waitForTimeout(1500)
   await expect(page.locator('.sold-celebration')).toHaveCount(0)
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)

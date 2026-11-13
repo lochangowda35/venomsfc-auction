@@ -10,7 +10,7 @@ test('local presentation: glass design, compact view menu, points and responsive
     if (request.method() !== 'GET') writes.push(request.url())
     if (new URL(request.url()).origin !== new URL(baseURL!).origin) remote.push(request.url())
   })
-  await page.goto('/')
+  await page.goto('/spectate')
   await expect(page.locator('.team-card')).toHaveCount(5)
   await page.evaluate(async () => { await document.fonts.ready })
   const fonts = await page.evaluate(() => {
