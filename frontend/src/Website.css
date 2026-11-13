@@ -42,15 +42,15 @@
 .cup-site a { color: inherit; text-decoration: none; }
 .cup-header {
   max-width: 1440px; min-height: 82px; margin: auto; padding: 14px 32px;
-  display: flex; align-items: center; justify-content: space-between; gap: 20px;
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 20px;
   border-bottom: 1px solid var(--cup-line); position: relative; z-index: 4;
 }
-.cup-brand { display: flex; align-items: center; gap: 12px; font-size: 19px; font-weight: 900; letter-spacing: .04em; }
+.cup-brand { display: flex; flex-shrink: 0; align-items: center; gap: 12px; font-size: 19px; font-weight: 900; letter-spacing: .04em; white-space: nowrap; }
 .cup-brand img { width: 52px; height: 52px; object-fit: contain; filter: drop-shadow(0 5px 12px #0008); }
 .cup-brand b { color: var(--cup-lime); }
 .cup-brand small { display: block; margin-top: 4px; color: var(--cup-muted); font-size: 9px; letter-spacing: .18em; }
-.cup-header nav { display: flex; gap: 8px; align-items: center; }
-.cup-header nav a { min-height: 42px; display: inline-flex; align-items: center; padding: 0 12px; color: var(--cup-muted); font-size: 12px; font-weight: 700; border-radius: 7px; }
+.cup-header nav { display: flex; flex-shrink: 0; max-width: 100%; gap: 8px; align-items: center; }
+.cup-header nav a { min-height: 42px; display: inline-flex; flex-shrink: 0; align-items: center; padding: 0 12px; color: var(--cup-muted); font-size: 12px; font-weight: 700; border-radius: 7px; white-space: nowrap; }
 .cup-header nav a:hover, .cup-header nav a[aria-current="page"] { color: var(--cup-text); background: #ffffff0b; }
 .cup-header nav .cup-host-link { color: var(--cup-lime); border: 1px solid #79d6ff42; margin-left: 8px; }
 .cup-main { max-width: 1320px; margin: auto; padding: 0 32px 72px; }
@@ -458,11 +458,16 @@
 .cup-history li { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 9px 0; border-top: 1px solid var(--cup-line); }
 .cup-history li span strong, .cup-history li span small { display: block; font-size: 10px; text-transform: capitalize; }
 .cup-history li span small { margin-top: 4px; color: var(--cup-muted); font-size: 8px; text-transform: none; }
+@media (max-width: 1000px) {
+  .cup-header nav { gap: 4px; }
+  .cup-site .cup-header nav a { padding: 0 9px; font-size: 13px; }
+  .cup-site .cup-header nav .cup-host-link { margin-left: 2px; padding: 0 8px; font-size: 11px; }
+}
 @media (max-width: 760px) {
-  .cup-header { padding: 12px 18px; align-items: flex-start; flex-direction: column; }
-  .cup-header nav { width: 100%; overflow-x: auto; gap: 2px; padding-bottom: 2px; }
-  .cup-header nav a { flex: 0 0 auto; padding: 0 9px; font-size: 10px; }
-  .cup-header nav .cup-host-link { margin-left: 2px; }
+  .cup-header { padding: 12px 18px; align-items: flex-start; flex-direction: column; gap: 12px; }
+  .cup-header nav { width: 100%; justify-content: space-between; gap: 2px; }
+  .cup-site .cup-header nav a { min-height: 44px; padding: 0 6px; font-size: clamp(11px, 2.7vw, 12px); }
+  .cup-site .cup-header nav .cup-host-link { padding: 0 6px; }
   .cup-main { padding: 0 18px 48px; }
   .cup-home-hero { grid-template-columns: 1fr; padding: 44px 0 36px; gap: 0; }
   .cup-home-hero h1 { font-size: clamp(60px, 14vw, 94px); }
@@ -503,6 +508,10 @@
   .cup-history li { flex-wrap: wrap; }
 }
 @media (max-width: 420px) {
+  .cup-header { padding-inline: 12px; }
+  .cup-header nav { gap: 0; }
+  .cup-site .cup-header nav a { padding: 0 4px; }
+  .cup-site .cup-header nav .cup-host-link { margin-left: 0; padding: 0 4px; font-size: 10px; }
   .cup-host-actions > button { flex: 1 1 130px; }
   .cup-roster-editor { grid-template-columns: 1fr; }
   .cup-roster-editor > button { width: 100%; }

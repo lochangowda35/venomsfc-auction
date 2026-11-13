@@ -314,6 +314,53 @@ test('penalty result cards name the winner without host-ended labels and preserv
   }
 })
 
+test('phone and unfolded headers keep every navigation label visible on one line without scrolling', async ({ page }, testInfo) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.route('**/api/cup**', (route) => {
+    const path = new URL(route.request().url()).pathname
+    return route.fulfill({ json: path === '/api/cup-auth/session' ? { authenticated: false }
+      : path === '/api/cup' ? { tournaments: [tournament] } : { tournament } })
+  })
+  await page.setViewportSize({ width: 360, height: 900 })
+  await page.goto('/')
+  await page.evaluate(() => document.fonts.ready)
+  const nav = page.getByRole('navigation', { name: 'Main navigation' })
+  await expect(nav.getByRole('link')).toHaveCount(5)
+  for (const width of [360, 390, 412, 600, 720, 768, 840, 900, 1440]) {
+    await page.setViewportSize({ width, height: 900 })
+    const layout = await nav.evaluate((element) => {
+      const bounds = element.getBoundingClientRect()
+      return {
+        scrollWidth: element.scrollWidth, clientWidth: element.clientWidth,
+        left: bounds.left, right: bounds.right,
+        links: Array.from(element.querySelectorAll('a')).map((link) => {
+          const box = link.getBoundingClientRect()
+          const text = document.createRange()
+          text.selectNodeContents(link)
+          const label = text.getBoundingClientRect()
+          return {
+            label: link.textContent, left: box.left, right: box.right, height: box.height,
+            textLeft: label.left, textRight: label.right, textHeight: label.height,
+            fontSize: parseFloat(getComputedStyle(link).fontSize),
+          }
+        }),
+      }
+    })
+    expect(layout.scrollWidth, `Navigation overflow at ${width}px`).toBeLessThanOrEqual(layout.clientWidth)
+    expect(layout.left).toBeGreaterThanOrEqual(0)
+    expect(layout.right).toBeLessThanOrEqual(width)
+    for (const link of layout.links) {
+      expect(link.left, `${link.label} starts outside navigation at ${width}px`).toBeGreaterThanOrEqual(layout.left)
+      expect(link.right, `${link.label} ends outside navigation at ${width}px`).toBeLessThanOrEqual(layout.right)
+      expect(link.textLeft).toBeGreaterThanOrEqual(link.left)
+      expect(link.textRight).toBeLessThanOrEqual(link.right)
+      expect(link.textHeight, `${link.label} wraps at ${width}px`).toBeLessThanOrEqual(link.fontSize * 1.7)
+      expect(link.height).toBeGreaterThanOrEqual(width <= 760 ? 44 : 42)
+    }
+    await page.locator('.cup-header').screenshot({ path: testInfo.outputPath(`header-${width}.png`) })
+  }
+})
+
 test('public Internal Cup routes render standings, leaders, profiles and match events on mobile', async ({ page }) => {
   await page.route('**/api/branding/**', async (route) => {
     await route.fulfill({
