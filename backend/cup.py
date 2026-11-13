@@ -669,11 +669,13 @@ def _event_dict(event):
     }
 
 
-def _match_dict(match, teams=None, include_events=True):
+def _match_dict(match, teams=None, include_events=True, *, events=None, players=None,
+                participations=None):
     teams = teams or {
         team.id: team for team in db.session.scalars(select(Team)).all()
     }
-    events = _events_for_match(match.id)
+    if events is None:
+        events = _events_for_match(match.id)
     score = match_score([_event_dict(event) for event in events], match.home_team_id, match.away_team_id) \
         if match.home_team_id is not None and match.away_team_id is not None else {}
     output = {
@@ -711,10 +713,11 @@ def _match_dict(match, teams=None, include_events=True):
     if include_events:
         output["penalty_eligible_player_ids"] = _penalty_eligible(match) \
             if match.clock.get("period") == "shootout" else {}
-        players = {
-            player.id: player
-            for player in db.session.scalars(select(Player)).all()
-        }
+        if players is None:
+            players = {
+                player.id: player
+                for player in db.session.scalars(select(Player)).all()
+            }
         output["events"] = [
             {
                 **_event_dict(event),
@@ -726,9 +729,10 @@ def _match_dict(match, teams=None, include_events=True):
             }
             for event in events
         ]
-        participations = db.session.scalars(
-            select(CupParticipation).where(CupParticipation.match_id == match.id)
-        ).all()
+        if participations is None:
+            participations = db.session.scalars(
+                select(CupParticipation).where(CupParticipation.match_id == match.id)
+            ).all()
         output["participations"] = [
             {
                 "player": _public_player(players[row.player_id]) if row.player_id in players else None,
@@ -754,6 +758,19 @@ def _tournament_dict(tournament, include_matches=True):
             CupMatch.state != "archived",
         ).order_by(CupMatch.match_order)
     ).all()
+    match_ids = [match.id for match in match_rows]
+    events_by_match = {match_id: [] for match_id in match_ids}
+    for event in db.session.scalars(
+        select(CupMatchEvent).where(
+            CupMatchEvent.match_id.in_(match_ids), CupMatchEvent.voided.is_(False),
+        ).order_by(CupMatchEvent.minute, CupMatchEvent.id)
+    ).all() if match_ids else []:
+        events_by_match[event.match_id].append(event)
+    participations_by_match = {match_id: [] for match_id in match_ids}
+    for participant in db.session.scalars(
+        select(CupParticipation).where(CupParticipation.match_id.in_(match_ids))
+    ).all() if match_ids else []:
+        participations_by_match[participant.match_id].append(participant)
     team_ids = sorted(
         {row.team_id for row in all_memberships}
         | {team_id for row in match_rows for team_id in (row.home_team_id, row.away_team_id) if team_id is not None}
@@ -781,8 +798,14 @@ def _tournament_dict(tournament, include_matches=True):
          "players": sorted(rosters[team_id], key=lambda p: p["name"].casefold())}
         for team_id in team_ids if team_id in teams
     ]
+    match_players = {
+        player.id: player for player in db.session.scalars(select(Player)).all()
+    } if include_matches and match_rows else {}
     matches = [
-        _match_dict(match, teams) for match in match_rows
+        _match_dict(
+            match, teams, events=events_by_match[match.id], players=match_players,
+            participations=participations_by_match[match.id],
+        ) for match in match_rows
     ] if include_matches else []
     tie_resolutions = tournament.settings.get("tie_resolutions", [])
     try:
@@ -793,26 +816,25 @@ def _tournament_dict(tournament, include_matches=True):
         unresolved_tie = "Host ranking decision required"
 
     all_events = [
-        _event_dict(event) for match in match_rows for event in _events_for_match(match.id)
+        _event_dict(event) for match in match_rows for event in events_by_match[match.id]
     ]
     stats = aggregate_player_statistics(all_events)
     membership_team = {row.player_id: row.team_id for row in memberships}
     appearance_counts = {}
-    for row in db.session.scalars(
-            select(CupParticipation).join(CupMatch).where(
-                CupMatch.tournament_id == tournament.id,
-                CupParticipation.status.in_(["starter", "entered", "substituted", "dismissed"]),
-                CupMatch.state.in_(["live", "paused", "review", "finalized"]),
-            )
-        ).all():
-        appearance_counts.setdefault(row.player_id, set()).add(row.match_id)
-    stat_players = {
-        player.id: player for player in db.session.scalars(
-            select(Player).where(Player.id.in_(
-                {row["player_id"] for row in stats} | set(appearance_counts)
-            ))
-        ).all()
-    }
+    for match in match_rows:
+        if match.state not in {"live", "paused", "review", "finalized"}:
+            continue
+        for row in participations_by_match[match.id]:
+            if row.status in {"starter", "entered", "substituted", "dismissed"}:
+                appearance_counts.setdefault(row.player_id, set()).add(row.match_id)
+    stat_player_ids = {row["player_id"] for row in stats} | set(appearance_counts)
+    stat_players = match_players
+    if not include_matches:
+        stat_players = {
+            player.id: player for player in db.session.scalars(
+                select(Player).where(Player.id.in_(stat_player_ids))
+            ).all()
+        } if stat_player_ids else {}
     stats_by_player = {row["player_id"]: row for row in stats}
     for player_id, appearances in appearance_counts.items():
         stats_by_player.setdefault(player_id, {"player_id": player_id})["appearances"] = len(appearances)
@@ -873,6 +895,12 @@ def list_tournaments():
     rows = db.session.scalars(
         select(CupTournament).where(CupTournament.lifecycle != "archived").order_by(CupTournament.id.desc())
     ).all()
+    if request.args.get("summary") == "1":
+        return jsonify(tournaments=[{
+            "id": row.id, "name": row.name, "edition": row.edition,
+            "lifecycle": "paused" if _tournament_paused(row) else row.lifecycle,
+            "version": row.version,
+        } for row in rows])
     return jsonify(tournaments=[_tournament_dict(row, include_matches=False) for row in rows])
 
 

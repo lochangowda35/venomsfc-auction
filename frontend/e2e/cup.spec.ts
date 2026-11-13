@@ -558,9 +558,9 @@ test('squads mark mapped captains and only requested leaderboards are removed', 
   } }
   await page.route('**/api/cup**', async (route) => {
     const path = new URL(route.request().url()).pathname
-    await route.fulfill({ json: path === '/api/cup/teams/1' ? { team: squad } : { tournament: data } })
+    await route.fulfill({ json: path === '/api/cup' ? { tournaments: [data] }
+      : path === '/api/cup/teams/1' ? { team: squad } : { tournament: data } })
   })
-  await page.route('**/api/cup', async (route) => route.fulfill({ json: { tournaments: [data] } }))
   const expectedOrder = ['Rhea Striker', 'First teammate', 'Second teammate']
   await page.goto('/')
   await expect(page.locator('.cup-roster-team').first().locator('li strong')).toHaveText(expectedOrder)
@@ -922,6 +922,121 @@ test('authenticated host desk edits cup roster and submits a reviewed fixture or
     .locator('select').first().selectOption('109', { timeout: 15_000 })
   await page.getByRole('button', { name: 'Kick off', exact: true }).click()
   await expect.poll(() => kickedOff).toBe(true)
+})
+
+function draftFixtureGenerationData() {
+  const players = Array.from({ length: 28 }, (_, index) => ({
+    ...player, id: index + 1, name: `Synthetic Player ${index + 1}`, teams: [],
+  }))
+  const teams = Array.from({ length: 5 }, (_, index) => ({
+    ...team, id: index + 1, name: `Synthetic Team ${index + 1}`,
+    players: players.filter((person) => person.id <= 26 && (person.id - 1) % 5 === index),
+  }))
+  const matches: (typeof match)[] = []
+  const data = {
+    ...tournament, lifecycle: 'draft', version: 1, teams, matches,
+    settings: { players_per_side: 4, half_minutes: 10, break_minutes: 5,
+      between_match_rest_minutes: 15, playoff_rest_minutes: 60 },
+    standings: teams.map((side) => ({ ...tournament.standings[0], ...side, played: 0, points: 0 })),
+  }
+  return { data, players }
+}
+
+test('fixture save survives a follow-up read timeout and never generates a second set', async ({ page }) => {
+  test.setTimeout(45_000)
+  const { data, players } = draftFixtureGenerationData()
+  let fixturePosts = 0
+  let detailReads = 0
+  let holdDetails = false
+  let releaseDetails: (() => void) | undefined
+  await page.route('**/api/cup**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/cup-auth/session') {
+      return route.fulfill({ json: { authenticated: true, csrf_token: 'synthetic-only' } })
+    }
+    if (path === '/api/cup/host/1/fixtures' && route.request().method() === 'POST') {
+      fixturePosts += 1
+      data.version = 2
+      data.matches.push(...Array.from({ length: 10 }, (_, index) => ({
+        ...match, id: index + 1, match_order: index + 1, state: 'draft',
+      })))
+      holdDetails = true
+      return route.fulfill({ json: { tournament_id: 1, version: 2 } })
+    }
+    if (path === '/api/cup/1') {
+      detailReads += 1
+      if (holdDetails) await new Promise<void>((resolve) => { releaseDetails = resolve })
+      return route.fulfill({ json: { tournament: data } })
+    }
+    return route.fulfill({ json: path === '/api/cup' ? { tournaments: [data] }
+      : path === '/api/cup/players' ? { players } : { history: [] } })
+  })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/tournament-host')
+  await page.getByRole('button', { name: 'Fixtures', exact: true }).click()
+  const generate = page.getByRole('button', { name: 'Generate fixtures', exact: true })
+  await expect(generate).toBeEnabled()
+  expect(detailReads).toBe(1)
+  await generate.click()
+  await expect(page.locator('.cup-host-notice').first()).toContainText('Fixtures were created and saved.')
+  await expect(page.locator('.cup-host-select select')).toBeDisabled()
+  const readFailure = page.getByRole('alert').filter({ hasText: 'The latest Cup state could not be loaded.' })
+  await expect(readFailure).toContainText('The server did not respond in time.', { timeout: 12_000 })
+  await expect(page.locator('.cup-host-notice').first()).toContainText('Fixtures were created and saved.')
+  await expect(generate).toBeDisabled()
+  await expect(page.getByText('The write outcome is unconfirmed', { exact: false })).toHaveCount(0)
+  expect(fixturePosts).toBe(1)
+  expect(await page.evaluate(() => sessionStorage.getItem('venomsfc.internal-cup.pending-command.v1'))).toBeNull()
+  holdDetails = false
+  releaseDetails?.()
+  await readFailure.getByRole('button', { name: 'Refresh desk' }).click()
+  await expect(readFailure).toHaveCount(0)
+  await expect(page.locator('.cup-host-select select')).toBeEnabled()
+  await expect(page.getByRole('status').filter({ hasText: 'Fixtures already exist for this tournament.' })).toBeVisible()
+  await expect(generate).toBeDisabled()
+  await page.reload()
+  await expect(page.getByRole('status').filter({ hasText: 'Fixtures already exist for this tournament.' })).toBeVisible()
+  await expect(generate).toBeDisabled()
+  expect(fixturePosts).toBe(1)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+})
+
+test('fixture rejection keeps the real server reason at the top even if the refresh fails', async ({ page }) => {
+  const { data, players } = draftFixtureGenerationData()
+  let fixturePosts = 0
+  let cancellations = 0
+  await page.route('**/api/cup**', async (route) => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/cup-auth/session') {
+      return route.fulfill({ json: { authenticated: true, csrf_token: 'synthetic-only' } })
+    }
+    if (path === '/api/cup/host/1/fixtures' && route.request().method() === 'POST') {
+      fixturePosts += 1
+      return route.fulfill({ status: 409, json: { error: 'Fixtures already exist. Review the saved schedule.' } })
+    }
+    if (path.startsWith('/api/cup/host/requests/')) {
+      if (path.endsWith('/cancel')) {
+        cancellations += 1
+        return route.fulfill({ json: { status: 'cancelled', tournament_id: 1 } })
+      }
+      return route.fulfill({ json: { status: 'not_committed' } })
+    }
+    if (fixturePosts && path === '/api/cup') return route.abort('failed')
+    return route.fulfill({ json: path === '/api/cup' ? { tournaments: [data] }
+      : path === '/api/cup/players' ? { players }
+        : path.endsWith('/history') ? { history: [] } : { tournament: data } })
+  })
+  await page.goto('/tournament-host')
+  await page.getByRole('button', { name: 'Fixtures', exact: true }).click()
+  const generate = page.getByRole('button', { name: 'Generate fixtures', exact: true })
+  await expect(generate).toBeEnabled()
+  await generate.click()
+  await expect(page.getByRole('alert').filter({ hasText: 'Nothing was saved' }))
+    .toContainText('Fixtures already exist. Review the saved schedule.')
+  await expect(page.getByRole('alert').filter({ hasText: 'The latest Cup state could not be loaded.' })).toBeVisible()
+  await expect(generate).toBeDisabled()
+  expect(fixturePosts).toBe(1)
+  expect(cancellations).toBe(1)
 })
 
 test('host recovers clearly when the server cannot cancel an unconfirmed request', async ({ page }) => {

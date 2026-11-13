@@ -107,6 +107,8 @@ type Tournament = {
   updated_at: string
 }
 
+type TournamentSummary = Pick<Tournament, 'id' | 'name' | 'edition' | 'lifecycle' | 'version'>
+
 function messageOf(error: unknown) {
   return error instanceof Error ? error.message : 'The request could not be completed.'
 }
@@ -915,15 +917,16 @@ export default function Website() {
       if (!hasLoaded) setLoading(true)
       setError('')
       try {
-        if (path === '/' || path === '/home' || path === '/tournaments') {
+        if (path === '/' || path === '/home') {
+          const result = await request<{ tournaments: TournamentSummary[] }>('/api/cup?summary=1', { signal: controller.signal })
+          const featured = result.tournaments[0]
+          const details = featured
+            ? await request<{ tournament: Tournament }>(`/api/cup/${featured.id}`, { signal: controller.signal })
+            : null
+          setTournaments(details ? [details.tournament] : [])
+        } else if (path === '/tournaments') {
           const result = await request<{ tournaments: Tournament[] }>('/api/cup', { signal: controller.signal })
-          if (path === '/' || path === '/home') {
-            const featured = result.tournaments[0]
-            const details = featured
-              ? await request<{ tournament: Tournament }>(`/api/cup/${featured.id}`, { signal: controller.signal })
-              : null
-            setTournaments(details ? [details.tournament] : [])
-          } else setTournaments(result.tournaments)
+          setTournaments(result.tournaments)
         } else if (path === '/players') {
           const result = await request<{ players: Player[] }>('/api/cup/players', { signal: controller.signal })
           setPlayers(result.players)
@@ -1064,7 +1067,7 @@ const pendingCupCommandKey = 'venomsfc.internal-cup.pending-command.v1'
 const requestId = () => crypto.randomUUID()
 
 export function CupHostDesk({ session, canMutate }: { session: CupSession | null; canMutate: boolean }) {
-  const [tournaments, setTournaments] = useState<Tournament[]>([])
+  const [tournaments, setTournaments] = useState<TournamentSummary[]>([])
   const [tournament, setTournament] = useState<Tournament | null>(null)
   const [cupPlayers, setCupPlayers] = useState<Player[]>([])
   const [history, setHistory] = useState<HostHistory[]>([])
@@ -1146,11 +1149,17 @@ export function CupHostDesk({ session, canMutate }: { session: CupSession | null
   }, [])
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [refreshError, setRefreshError] = useState('')
+  const [snapshotReady, setSnapshotReady] = useState(false)
+  const [refreshing, setRefreshing] = useState(false)
+  const refreshController = useRef<AbortController | null>(null)
+  const selectedTournamentId = useRef<number | undefined>(undefined)
   const [pendingCommand, setPendingCommand] = useState<PendingCupCommand | null>(null)
   const [pendingStorageReady, setPendingStorageReady] = useState(false)
   const inFlightRequestId = useRef<string | null>(null)
+  const reconciliationInFlight = useRef(false)
   const [shootoutTakerRule, setShootoutTakerRule] = useState('rotate_active_players')
-  const writesAvailable = canMutate && pendingStorageReady && pendingCommand === null
+  const writesAvailable = canMutate && snapshotReady && pendingStorageReady && pendingCommand === null
   const selectedMatch = tournament?.matches.find((row) => row.id === selectedMatchId) ?? null
   const leagueMatches = tournament?.matches.filter((row) => row.stage === 'league') ?? []
   const configuredPlayers = Number(tournament?.settings.players_per_side)
@@ -1413,14 +1422,25 @@ export function CupHostDesk({ session, canMutate }: { session: CupSession | null
   }
 
   const refreshCup = useCallback(async (selectedId?: number) => {
+    const targetId = selectedId ?? selectedTournamentId.current
+    if (refreshController.current && !refreshController.current.signal.aborted) {
+      if (targetId === selectedTournamentId.current) return false
+      refreshController.current.abort()
+    }
+    const controller = new AbortController()
+    refreshController.current = controller
+    if (targetId !== selectedTournamentId.current) setSnapshotReady(false)
+    selectedTournamentId.current = targetId
+    setRefreshing(true)
     try {
-      const list = await request<{ tournaments: Tournament[] }>('/api/cup')
+      const list = await request<{ tournaments: TournamentSummary[] }>('/api/cup?summary=1', { signal: controller.signal })
       setTournaments(list.tournaments)
-      const roster = await request<{ players: Player[] }>('/api/cup/players')
+      const roster = await request<{ players: Player[] }>('/api/cup/players', { signal: controller.signal })
       setCupPlayers(roster.players)
-      const id = selectedId ?? tournament?.id ?? list.tournaments[0]?.id
+      const id = targetId ?? list.tournaments[0]?.id
       if (id) {
-        const detail = await request<{ tournament: Tournament }>(`/api/cup/${id}`)
+        const detail = await request<{ tournament: Tournament }>(`/api/cup/${id}`, { signal: controller.signal })
+        selectedTournamentId.current = id
         setTournament(detail.tournament)
         const matches = detail.tournament.matches
         const activeMatch = matches.find((row) => ['live', 'paused', 'review'].includes(row.state))
@@ -1440,17 +1460,31 @@ export function CupHostDesk({ session, canMutate }: { session: CupSession | null
           if (activeMatch) return activeMatch.id
           return currentExists ? current : matches.find((row) => row.state === 'scheduled')?.id ?? matches[0]?.id ?? null
         })
-        const audit = await request<{ history: HostHistory[] }>(`/api/cup/host/${id}/history`)
+        const audit = await request<{ history: HostHistory[] }>(`/api/cup/host/${id}/history`, { signal: controller.signal })
         setHistory(audit.history)
       } else {
         setTournament(null)
         setHistory([])
         setCupPlayers([])
       }
+      setSnapshotReady(true)
+      setRefreshError('')
+      return true
     } catch (caught) {
-      setError(messageOf(caught))
+      if (!controller.signal.aborted) {
+        setSnapshotReady(false)
+        setRefreshError(`The latest Cup state could not be loaded. ${messageOf(caught)} Saved actions are not repeated. Refresh the desk before making another change.`)
+      }
+      return false
+    } finally {
+      if (refreshController.current === controller) {
+        refreshController.current = null
+        setRefreshing(false)
+      }
     }
-  }, [tournament?.id])
+  }, [])
+
+  useEffect(() => () => refreshController.current?.abort(), [])
 
   useEffect(() => {
     try {
@@ -1542,11 +1576,15 @@ export function CupHostDesk({ session, canMutate }: { session: CupSession | null
     const matchId = selectedMatch?.id
     const matchState = selectedMatch?.state
     if (!session?.authenticated || !tournamentId || !matchId || !['live', 'paused'].includes(matchState ?? '')) return
-    const timer = window.setInterval(() => void refreshCup(tournamentId), 5000)
+    const timer = window.setInterval(() => {
+      if (!busyRef.current) void refreshCup(tournamentId)
+    }, 5000)
     return () => window.clearInterval(timer)
   }, [session?.authenticated, tournament?.id, selectedMatch?.id, selectedMatch?.state, refreshCup])
 
   const reconcilePendingCommand = useCallback(async (command: PendingCupCommand, rejection?: string) => {
+    if (reconciliationInFlight.current) return
+    reconciliationInFlight.current = true
     try {
       const status = await request<{
         request_id: string
@@ -1605,14 +1643,16 @@ export function CupHostDesk({ session, canMutate }: { session: CupSession | null
       } else if (outcome.status === 'cancelled') {
         await window.sessionStorage.removeItem(pendingCupCommandKey)
         setPendingCommand(null)
-        setError('')
+        setError(rejection ? `${rejection} Nothing was saved; review the current state before trying again.` : '')
         setNotice(`${rejection ? `${rejection} ` : ''}Cup request ${command.request_id} was safely cancelled. Any delayed copy will be rejected; review the current state before submitting a new action.`)
         await refreshCup(outcome.tournament_id ?? command.tournament_id ?? undefined)
       } else {
         throw new Error('The Cup request cancellation has no terminal status.')
       }
     } catch (caught) {
-      setError(`Request ${command.request_id} is still unconfirmed. Keep this page open or reconnect; Cup writes remain blocked. ${messageOf(caught)}`)
+      setError(`${rejection ? `${rejection} ` : ''}Request ${command.request_id} is still unconfirmed. Keep this page open or reconnect; Cup writes remain blocked. ${messageOf(caught)}`)
+    } finally {
+      reconciliationInFlight.current = false
     }
   }, [refreshCup, session?.csrf_token])
 
@@ -1635,6 +1675,7 @@ export function CupHostDesk({ session, canMutate }: { session: CupSession | null
     setBusyState(true)
     setError('')
     setNotice('')
+    refreshController.current?.abort()
     const id = requestId()
     const command: PendingCupCommand = {
       request_id: id,
@@ -1652,11 +1693,14 @@ export function CupHostDesk({ session, canMutate }: { session: CupSession | null
       return false
     }
     try {
-      await request(path, {
+      const saved = await request<{ tournament_id?: number; version: number }>(path, {
         method: 'POST',
         csrf: session.csrf_token,
         body: command.body,
       })
+      setSnapshotReady(false)
+      const savedTournamentId = saved.tournament_id ?? targetTournamentId
+      if (savedTournamentId !== null) selectedTournamentId.current = savedTournamentId
       try {
         window.sessionStorage.removeItem(pendingCupCommandKey)
         setPendingCommand(null)
@@ -1664,8 +1708,12 @@ export function CupHostDesk({ session, canMutate }: { session: CupSession | null
         setError(`Cup request ${id} succeeded, but its local receipt could not be cleared. Writes remain blocked while it is reconciled.`)
         return false
       }
-      setNotice(`Cup action ${id} saved. It is recorded in host history and can be undone.`)
-      await refreshCup(targetTournamentId ?? undefined)
+      const fixturesCreated = /^\/api\/cup\/host\/\d+\/fixtures$/.test(path)
+      setNotice(fixturesCreated
+        ? 'Fixtures were created and saved. Do not generate another set; the schedule will appear when the desk refreshes.'
+        : `Cup action ${id} saved. It is recorded in host history and can be undone.`)
+      const refreshed = await refreshCup(savedTournamentId ?? undefined)
+      if (fixturesCreated && refreshed) setNotice('Fixtures were created and saved. Review the existing schedule below; generating another set is disabled.')
       return true
     } catch (caught) {
       setError(caught instanceof ApiError && caught.status === 0
@@ -1787,16 +1835,24 @@ export function CupHostDesk({ session, canMutate }: { session: CupSession | null
       {pendingCommand && session?.authenticated && <> <button type="button" className="secondary" disabled={busy}
         onClick={() => void reconcilePendingCommand(pendingCommand)}>Check again</button></>}</div>}
     {notice && <div className="cup-host-notice" role="status">{notice}</div>}
+    {refreshError && <div className="cup-alert" role="alert">{refreshError}
+      <button type="button" className="secondary" disabled={busy || refreshing}
+        onClick={() => void refreshCup()}>Refresh desk</button></div>}
+    {!!tournament?.matches.length && <div className="cup-host-notice" role="status">
+      Fixtures already exist for this tournament. Review the existing schedule; generating another set is disabled.
+    </div>}
     {!writesAvailable && <div className="cup-alert" role="status">
       {pendingCommand
         ? <>Request <code>{pendingCommand.request_id}</code> is being reconciled against host history. Do not retry; Cup writes stay disabled until its outcome is confirmed.</>
-        : 'Host connection or local request storage is unavailable. Cup writes are disabled until access and connection are confirmed.'}
+        : !snapshotReady ? 'Waiting for the latest Cup state. Host changes are disabled until the desk is refreshed.'
+          : 'Host connection or local request storage is unavailable. Cup writes are disabled until access and connection are confirmed.'}
     </div>}
     {!tournaments.length ? <button className="cup-primary-button" disabled={!writesAvailable || busy}
       onClick={() => void send('/api/cup/host/tournaments', { name: 'Venoms Internal Cup', edition: '1st Edition' }, undefined)}>
       Create Internal Cup
     </button> : <label className="cup-host-select">Tournament
-      <select value={tournament?.id ?? ''} onChange={(event) => void refreshCup(Number(event.target.value))}>
+      <select value={tournament?.id ?? ''} disabled={busy || refreshing || pendingCommand !== null}
+        onChange={(event) => void refreshCup(Number(event.target.value))}>
         {tournaments.map((row) => <option value={row.id} key={row.id}>{row.name} · {row.edition}</option>)}
       </select>
     </label>}

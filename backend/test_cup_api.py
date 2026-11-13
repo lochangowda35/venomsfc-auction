@@ -6,7 +6,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from PIL import Image
-from sqlalchemy import select
+from sqlalchemy import event, select
 from werkzeug.security import generate_password_hash
 
 from app import create_app
@@ -966,6 +966,78 @@ class CupApiTests(unittest.TestCase):
         self.assertEqual([row.id for row in db.session.scalars(select(CupMatch).where(
             CupMatch.tournament_id == tournament_id
         ).order_by(CupMatch.match_order)).all()], original_ids)
+
+    def test_fixture_refresh_batches_match_data_and_offers_a_lightweight_tournament_list(self):
+        csrf = self.login()
+        created = self.post("/api/cup/host/tournaments", csrf, {
+            "request_id": "create-batched-refresh",
+        })
+        tournament_id = created.json["tournament_id"]
+        self.post(f"/api/cup/host/{tournament_id}/import-squads", csrf, {
+            "request_id": "import-batched-refresh", "expected_version": 0,
+        })
+        generated = self.post(f"/api/cup/host/{tournament_id}/fixtures", csrf, {
+            "request_id": "fixtures-batched-refresh", "expected_version": 1,
+            "kickoff": "2026-11-14T10:00:00+00:00",
+        })
+        self.assertEqual(generated.status_code, 200, generated.json)
+        first = db.session.scalar(select(CupMatch).where(
+            CupMatch.tournament_id == tournament_id, CupMatch.match_order == 1,
+        ))
+        first.state = "finalized"
+        former_player = db.session.get(CupPlayer, self.players[0].id)
+        membership = db.session.scalar(select(CupRosterMembership).where(
+            CupRosterMembership.tournament_id == tournament_id,
+            CupRosterMembership.player_id == former_player.id,
+        ))
+        membership.active = False
+        db.session.add(CupParticipation(
+            match_id=first.id, team_id=first.home_team_id, player_id=former_player.id,
+            status="starter", goalkeeper=False,
+        ))
+        db.session.add(CupMatchEvent(
+            match_id=first.id, request_id="batched-historical-goal", event_type="shot",
+            minute=1, period="first_half", team_id=first.home_team_id,
+            player_id=former_player.id, assist_player_id=self.players[1].id,
+            outcome="goal", payload={}, voided=False, created_at=datetime.now(timezone.utc),
+        ))
+        db.session.commit()
+        statements = []
+
+        def count_queries(connection, cursor, statement, parameters, context, executemany):
+            statements.append(statement)
+
+        event.listen(db.engine, "before_cursor_execute", count_queries)
+        try:
+            response = self.client.get(f"/api/cup/{tournament_id}")
+            self.assertEqual(response.status_code, 200, response.json)
+            self.assertLessEqual(len(statements), 12, statements)
+            detail = response.json["tournament"]
+            self.assertEqual(len(detail["matches"]), 10)
+            self.assertEqual(detail["matches"][0]["home_goals"], 1)
+            self.assertEqual(detail["matches"][0]["events"][0]["player"]["id"], former_player.id)
+            self.assertEqual(detail["matches"][0]["participations"][0]["player"]["id"], former_player.id)
+            self.assertEqual(detail["leaderboards"]["goals"][0]["total"], 1)
+            self.assertEqual(detail["leaderboards"]["assists"][0]["player"]["id"], self.players[1].id)
+            self.assertEqual(detail["leaderboards"]["appearances"][0]["total"], 1)
+            self.assertTrue(all(not match["events"] for match in detail["matches"][1:]))
+            statements.clear()
+            summary = self.client.get("/api/cup?summary=1")
+            self.assertEqual(summary.status_code, 200, summary.json)
+            self.assertEqual(len(statements), 1)
+            self.assertEqual(summary.json["tournaments"][0]["id"], tournament_id)
+            self.assertNotIn("teams", summary.json["tournaments"][0])
+            self.assertNotIn("matches", summary.json["tournaments"][0])
+        finally:
+            event.remove(db.engine, "before_cursor_execute", count_queries)
+        duplicate = self.post(f"/api/cup/host/{tournament_id}/fixtures", csrf, {
+            "request_id": "duplicate-batched-fixtures", "expected_version": generated.json["version"],
+            "kickoff": "2026-11-14T10:00:00+00:00",
+        })
+        self.assertEqual(duplicate.status_code, 409)
+        self.assertIn("Fixtures already exist", duplicate.json["error"])
+        self.assertEqual(len(self.client.get(f"/api/cup/{tournament_id}").json["tournament"]["matches"]), 10)
+        self.assertEqual(db.session.get(Auction, 1).state, self.auction_state)
 
     def test_fixture_generation_publish_and_undo_can_be_reapplied(self):
         csrf = self.login()

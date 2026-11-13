@@ -68,6 +68,11 @@ the final and third-place participants (or explicitly await a host tie decision)
 For teams level on points, goal difference and goals scored, the host selects
 each tied place and confirms the audited ranking before adding playoff fixtures.
 The host can then add both playoff fixtures from the match desk.
+Fixture generation is disabled once a tournament has fixtures, with a notice at
+the top of the host desk. A confirmed save is not reported as failed if the
+follow-up read times out: the saved action stays acknowledged, further changes
+are blocked, and Refresh desk reloads state without repeating the command.
+Server rejection reasons remain visible while request reconciliation completes.
 As each playoff is finalized, the announcement shows the confirmed winners,
 runners-up and third place without awarding pending results. Home and tournament
 pages celebrate the finalized final winner and highlight every player tied for
